@@ -798,23 +798,33 @@ def run_all_validations(cash_df, revenue_df, expenditure_df, entity_name, is_q1,
                 add_finding(36, "Object 53330 not used in Functions 1000/2100", is_pass=True)
         
         # --- STEP 37: Forbidden Objects Check (58213, 58214, 58215, 58216, 58218) ---
+        # These objects may be BUDGETED but must NOT have actual expenditures (YTD or Period)
         forbidden_objs = ['58213', '58214', '58215', '58216', '58218']
         if 'Object_Key' in e_df.columns and ytd_col:
             bad_rows = e_df[e_df['Object_Key'].isin(forbidden_objs)]
             if not bad_rows.empty:
-                results_list = []
+                expend_flags = []
+                budget_only = []
                 for obj in forbidden_objs:
                     obj_rows = bad_rows[bad_rows['Object_Key'] == obj]
                     if not obj_rows.empty:
                         ytd_total = obj_rows[ytd_col].sum()
+                        per_total = obj_rows[per_col].sum() if per_col else 0
                         bud_total = obj_rows[bud_col].sum() if bud_col else 0
-                        if ytd_total > 0 or bud_total > 0:
-                            results_list.append(f"Object {obj}: YTD=${ytd_total:,.2f}, Budget=${bud_total:,.2f}")
+                        has_expenditures = ytd_total > 0.01 or per_total > 0.01
+                        
+                        if has_expenditures:
+                            expend_flags.append(f"Object {obj}: YTD=${ytd_total:,.2f}, Period=${per_total:,.2f}, Budget=${bud_total:,.2f}")
+                        elif bud_total > 0.01:
+                            budget_only.append(f"Object {obj}: Budget=${bud_total:,.2f} (no expenditures — OK)")
                 
-                if results_list:
-                    add_finding(37, f"🚩 Forbidden Objects Found: {'; '.join(results_list)}")
+                if expend_flags:
+                    add_finding(37, f"🚩 Forbidden Objects with EXPENDITURES: {'; '.join(expend_flags)}")
                 else:
-                    add_finding(37, "Forbidden objects present but with $0 activity", is_pass=True)
+                    add_finding(37, "✅ No expenditures in forbidden objects (58213-58218)", is_pass=True)
+                
+                if budget_only:
+                    add_finding(37, f"ℹ️ Budgeted only (allowed): {'; '.join(budget_only)}", is_pass=True)
             else:
                 add_finding(37, "✅ No forbidden objects (58213-58218) found", is_pass=True)
         
