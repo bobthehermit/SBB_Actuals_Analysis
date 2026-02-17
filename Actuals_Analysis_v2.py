@@ -493,8 +493,16 @@ def run_all_validations(cash_df, revenue_df, expenditure_df, entity_name, is_q1,
                     fund_15100_pct = ratio_df[ratio_df['Fund'] == '15100']['Percentage'].sum() if '15100' in ratio_df['Fund'].values else 0
                     if fund_15100_pct < 75:
                         add_finding(16, f"🚩 Impact Aid (44103) in Fund 15100: {fund_15100_pct:.1f}% (Should be ≥75%)")
+                        
                     else:
                         add_finding(16, f"✅ Impact Aid (44103) Fund 15100: {fund_15100_pct:.1f}% (within 75-100% limit)", is_pass=True)
+                    
+                    # Show detail table for Impact Aid
+                    cols = {'Fund': 'Fund_Key', 'Object': 'Object_Key'}
+                    if per_col: cols['Period Amount'] = per_col
+                    if ytd_col: cols['YTD Amount'] = ytd_col
+                    if bud_col: cols['Adjusted Budget'] = bud_col
+                    build_detail_table(impact_aid_rows, cols, 15, f"Impact Aid (44103) Detail ({len(impact_aid_rows)} lines)")
             else:
                 add_finding(15, "Object 44103 (Impact Aid) not present", is_pass=True)
                 add_finding(16, "Object 44103 (Impact Aid) not present", is_pass=True)
@@ -540,6 +548,14 @@ def run_all_validations(cash_df, revenue_df, expenditure_df, entity_name, is_q1,
                 else:
                     add_finding(17, "Object 41110 not present in Fund 11000 or 15200", is_pass=True)
                     add_finding(18, "Object 41110 not present in Fund 11000 or 15200", is_pass=True)
+                
+                # Show detail table for Ad Valorem
+                cols = {'Fund': 'Fund_Key', 'Object': 'Object_Key'}
+                if per_col: cols['Period Amount'] = per_col
+                if ytd_col: cols['YTD Amount'] = ytd_col
+                if bud_col: cols['Adjusted Budget'] = bud_col
+                build_detail_table(av_filtered, cols, 17, f"Ad Valorem (41110) Funds 11000/15200 Detail ({len(av_filtered)} lines)")
+
             else:
                 add_finding(17, "Object 41110 (Ad Valorem) not present", is_pass=True)
                 add_finding(18, "Object 41110 (Ad Valorem) not present", is_pass=True)
@@ -557,6 +573,13 @@ def run_all_validations(cash_df, revenue_df, expenditure_df, entity_name, is_q1,
                 ratio_str = " | ".join([f"Fund {r['Fund']}: ${r['Amount']:,.2f} ({r['Percentage']:.1f}%)" for r in ratio_data])
                 add_finding(19, f"Object 41113 Distribution: {ratio_str}", is_pass=True)
                 add_finding(20, f"Object 41113 Total YTD: ${total:,.2f}", is_pass=True)
+
+                cols = {'Fund': 'Fund_Key', 'Object': 'Object_Key'}
+                if per_col: cols['Period Amount'] = per_col
+                if ytd_col: cols['YTD Amount'] = ytd_col
+                if bud_col: cols['Adjusted Budget'] = bud_col
+                build_detail_table(rows_41113, cols, 19, f"Object 41113 Detail ({len(rows_41113)} lines)")
+
             else:
                 add_finding(19, "Object 41113 not present", is_pass=True)
                 add_finding(20, "Object 41113 not present", is_pass=True)
@@ -574,6 +597,13 @@ def run_all_validations(cash_df, revenue_df, expenditure_df, entity_name, is_q1,
                 ratio_str = " | ".join([f"Fund {r['Fund']}: ${r['Amount']:,.2f} ({r['Percentage']:.1f}%)" for r in ratio_data])
                 add_finding(21, f"Object 41114 Distribution: {ratio_str}", is_pass=True)
                 add_finding(22, f"Object 41114 Total YTD: ${total:,.2f}", is_pass=True)
+
+                cols = {'Fund': 'Fund_Key', 'Object': 'Object_Key'}
+                if per_col: cols['Period Amount'] = per_col
+                if ytd_col: cols['YTD Amount'] = ytd_col
+                if bud_col: cols['Adjusted Budget'] = bud_col
+                build_detail_table(rows_41114, cols, 21, f"Object 41114 Detail ({len(rows_41114)} lines)")
+
             else:
                 add_finding(21, "Object 41114 not present", is_pass=True)
                 add_finding(22, "Object 41114 not present", is_pass=True)
@@ -606,6 +636,13 @@ def run_all_validations(cash_df, revenue_df, expenditure_df, entity_name, is_q1,
                         add_finding(24, f"🚩 Forest Reserve (44204) in Fund 15200: {fund_15200_pct:.1f}% (Should be ≥75%)")
                     else:
                         add_finding(24, f"✅ Forest Reserve (44204) Fund 15200: {fund_15200_pct:.1f}%", is_pass=True)
+                    
+                    # Show detail table for Forest Reserve
+                    cols = {'Fund': 'Fund_Key', 'Object': 'Object_Key'}
+                    if per_col: cols['Period Amount'] = per_col
+                    if ytd_col: cols['YTD Amount'] = ytd_col
+                    if bud_col: cols['Adjusted Budget'] = bud_col
+                    build_detail_table(forest_rows, cols, 23, f"Forest Reserve (44204) Detail ({len(forest_rows)} lines)")
             else:
                 add_finding(23, "Object 44204 (Forest Reserve) not present", is_pass=True)
                 add_finding(24, "Object 44204 (Forest Reserve) not present", is_pass=True)
@@ -619,6 +656,14 @@ def run_all_validations(cash_df, revenue_df, expenditure_df, entity_name, is_q1,
                     add_finding(25, f"✅ Fund 21100 has YTD activity: ${total_ytd:,.2f}", is_pass=True)
                 else:
                     add_finding(25, f"🚩 Fund 21100 has $0 YTD - Expected activity for Universal Free Lunch")
+                
+                cols = {'Fund': 'Fund_Key'}
+                if 'Object_Key' in r_df.columns: cols['Object'] = 'Object_Key'
+                if per_col: cols['Period Amount'] = per_col
+                if ytd_col: cols['YTD Amount'] = ytd_col
+                if bud_col: cols['Adjusted Budget'] = bud_col
+                build_detail_table(fund_21100_rows, cols, 25, f"Fund 21100 Revenue Detail ({len(fund_21100_rows)} lines)")
+
             else:
                 add_finding(25, "⚠️ Fund 21100 not present in Revenue Report")
 
