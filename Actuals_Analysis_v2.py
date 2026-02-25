@@ -765,6 +765,44 @@ def run_all_validations(cash_df, revenue_df, expenditure_df, entity_name, is_q1,
             else:
                 add_finding(32, "All salary lines with YTD >$100 have corresponding FTE", is_pass=True)
             
+            # --- STEP 32 DETAIL TABLE: Full 51100 by Job Class (excl. subs) ---
+            # Statute 22-8-13.3 B, 22-8-48 | PSAB Supplement 14 | SCM Manual | 925F Report
+            adj_fte_col_32 = find_col_include(e_df, ['adjusted fte'])
+            
+            detail_rows_32 = []
+            for jc in sorted(relevant['JobClass_Key'].unique()):
+                jc_data = relevant[relevant['JobClass_Key'] == jc]
+                ytd_sum = jc_data[ytd_col].sum()
+                fte_sum = jc_data[fte_col].sum()
+                bud_sum = jc_data[bud_col].sum() if bud_col else 0
+                enc_sum = jc_data[enc_col].sum() if enc_col else 0
+                adj_fte_sum = jc_data[adj_fte_col_32].sum() if adj_fte_col_32 else 0
+                
+                fte_delta = adj_fte_sum - fte_sum
+                avg_salary = ytd_sum / fte_sum if fte_sum > 0 else 0
+                
+                jc_label = jc
+                if 'JobClass' in jc_data.columns:
+                    first = jc_data['JobClass'].iloc[0]
+                    if ' - ' in str(first):
+                        jc_label = str(first)
+                
+                detail_rows_32.append({
+                    'Job Class': jc_label,
+                    'Adj Budget': f"${bud_sum:,.2f}",
+                    'YTD Salary': f"${ytd_sum:,.2f}",
+                    'Encumbered': f"${enc_sum:,.2f}",
+                    'Actuals FTE': f"{fte_sum:.2f}",
+                    'Budgeted FTE': f"{adj_fte_sum:.2f}",
+                    'FTE Δ': f"{fte_delta:+.2f}",
+                    'Avg Salary': f"${avg_salary:,.2f}" if fte_sum > 0 else "N/A"
+                })
+            
+            if detail_rows_32:
+                add_finding(32, f"📋 Object 51100 by Job Class ({len(detail_rows_32)} classes, excl. substitutes)", is_pass=True)
+                add_table(32, pd.DataFrame(detail_rows_32),
+                         f"Object 51100 Salary by Job Class ({len(detail_rows_32)} classes, excl. substitutes)")
+
         # --- STEP 33: FIXED - Check substitute job classes (1610, 1611, 1612, 1613, 1800) for FTE ---
         # These substitute positions should NOT have FTE reported
         if 'Object_Key' in e_df.columns and 'JobClass_Key' in e_df.columns and ytd_col and fte_col:
@@ -1853,6 +1891,8 @@ def generate_html_report(
         var_class = 'negative' if var < -1 else ('positive' if var > 1 else '')
         var_sign = '' if var < 0 else '+'
         var_display = f"{var_sign}{var:.1f}" if jd['adj_fte'] > 0 else "—"
+        avg_sal = jd['per_fte']  # already calculated as ytd/fte
+        avg_sal_display = f"${avg_sal:,.0f}" if avg_sal > 0 else "—"
         salary_rows += f'''<tr>
             <td>{jc} — {jd['name']}</td>
             <td class="num">${jd['budget']:,.0f}</td>
@@ -1861,6 +1901,7 @@ def generate_html_report(
             <td class="num">{fte_display}</td>
             <td class="num">{adj_display}</td>
             <td class="num {var_class}">{var_display}</td>
+            <td class="num">{avg_sal_display}</td>
         </tr>'''
     
     # --- Program Table ---
@@ -2219,7 +2260,7 @@ def generate_html_report(
 {'<div class="section"><h2 class="section-title">FTE Variance Analysis</h2><p class="section-subtitle">Object 51100 staffing — flagging variances of 2.0+ FTE between actuals and budget</p><div class="table-wrap"><table><thead><tr><th>Job Class</th><th style="text-align:right">Actual FTE</th><th style="text-align:right">Budgeted FTE</th><th style="text-align:right">Variance</th><th>Status</th><th>Note</th></tr></thead><tbody>' + fte_var_rows + '</tbody></table></div></div>' if fte_var_rows else ''}
 
 <!-- 10. SALARY BY JOB CLASS -->
-{'<div class="section"><h2 class="section-title">Salary by Job Class (Object 51100)</h2><p class="section-subtitle">Total salary: <strong>${total_salary:,.0f}</strong> | Total FTE: <strong>{total_fte:.1f}</strong></p><div class="chart-container" style="height:380px;margin-bottom:20px;"><canvas id="salaryChart"></canvas></div><div class="table-wrap"><table><thead><tr><th>Job Class</th><th style="text-align:right">Budget</th><th style="text-align:right">YTD Salary</th><th style="text-align:right">Encumbered</th><th style="text-align:right">Actual FTE</th><th style="text-align:right">Budgeted FTE</th><th style="text-align:right">FTE &Delta;</th></tr></thead><tbody>' + salary_rows + '</tbody></table></div></div>' if salary_rows else ''}
+{'<div class="section"><h2 class="section-title">Salary by Job Class (Object 51100)</h2><p class="section-subtitle">Total salary: <strong>${total_salary:,.0f}</strong> | Total FTE: <strong>{total_fte:.1f}</strong></p><div class="chart-container" style="height:380px;margin-bottom:20px;"><canvas id="salaryChart"></canvas></div><div class="table-wrap"><table><thead><tr><th>Job Class</th><th style="text-align:right">Budget</th><th style="text-align:right">YTD Salary</th><th style="text-align:right">Encumbered</th><th style="text-align:right">Actual FTE</th><th style="text-align:right">Budgeted FTE</th><th style="text-align:right">FTE &Delta;</th><th style="text-align:right">Avg Salary</th></tr></thead><tbody>' + salary_rows + '</tbody></table></div></div>' if salary_rows else ''}
 
 <!-- 11. PROGRAM-LEVEL SPENDING -->
 {'<div class="section"><h2 class="section-title">Program-Level Spending</h2><p class="section-subtitle">Expenditure breakdown by program code</p><div class="chart-row"><div class="chart-container" style="height:320px;"><canvas id="programChart"></canvas></div><div class="table-wrap"><table><thead><tr><th>Program</th><th style="text-align:right">YTD Actuals</th><th style="text-align:right">Encumbered</th><th style="text-align:right">Budget</th><th style="text-align:right">% Used</th></tr></thead><tbody>' + program_rows + '</tbody></table></div></div></div>' if program_rows else ''}
