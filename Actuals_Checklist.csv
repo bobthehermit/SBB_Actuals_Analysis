@@ -1,0 +1,470 @@
+﻿step,Review Area,UCOA LINE/AREA of Report,Districts/ Charters,Check ,Support,Suggested Method/Notes,Disapprove?
+1,Review Prep,Picture,,Cash report excel uploaded to FTS,"Statute
+22-8-13.2
+NMAC
+6.20.2.10  C.
+6.20.2.14 L. ","Navigate to FTS--> budget entity subsite--> FYXX--> Financial Reporting--> M/Q being reviewed
+
+Due last working day of the month following the end of the reporting period. Make note if cash report is late and discuss with SBO.",Not cause for disapproval
+2,Review Prep,Picture,,Cash report PDF uploaded to FTS,"Statute
+22-8-13.2
+NMAC
+6.20.2.10  C.
+6.20.2.8  D.
+6.20.2.14 L.","Navigate to FTS--> budget entity subsite--> FYXX--> Financial Reporting--> M/Q being reviewed
+
+Ensure Cash Report PDF is signed by licensed SBO.  Analysts currently do not have access to licensure portal; however, if you have a concern, ask Vince or Sara to search the database to ensure license is active.
+
+Due last working day of the month following the end of the reporting period. Make note if cash report is late and discuss with SBO.",Not cause for disapproval
+3,Review Prep,Picture,,Bank statement(s) uploaded to FTS,"Statute
+22-8-13.2
+NMAC
+6.20.2.10  C.
+6.20.2.14 G. K. L. ","Navigate to FTS--> budget entity subsite--> FYXX--> Financial Reporting--> M/Q being reviewed
+
+Ensure bank statements are dated the end of the reporting period being reviewed.
+
+Due last working day of the month following the end of the reporting period. Make note if bank statements are late and discuss with SBO",Not cause for disapproval
+4,Review Prep,Picture,,Actuals submitted in OBMS,"Statute
+22-8-13.2
+NMAC
+6.20.2.10  C.","Navigate to OBMS --> Actuals module
+Select Budget Year, Entity, and Reporting Period being reviewed and click Retrieve.  The submission date is found by expanding the folder, the Action column must Say ""Submit Actuals"" otherwise, the actuals have not been submitted yet.
+
+Due last working day of the month following the end of the reporting period. Make note if cash report is late and discuss with SBO.",Not cause for disapproval unless entity asks to reopen/reupload
+5,Revenue,Picture,,Run Actuals Revenue Report,"Statute
+22-8-13.2
+NMAC
+6.20.2.10  C.","Navigate to OBMS --> Reports --> Actuals Reports --> Actuals Revenue Rollup Report
+Select entity name/fiscal year in the ""Budget Year"" and the ""Actual Reporting Period"" for the period being reviewed; click ""View Report"" and export to Excel by clicking on disk icon and clicking Excel.",N/A
+6,Revenue,Picture,,Open the SEG file ,,"Navigate to the FTS Main Page --> Announcements section
+Open SEG file for the relevant period end, i.e. for Q1=September file, for M1=July file.",N/A
+7,Revenue,Picture,,Open the SEG BAR Memo file ,,"Navigate to the FTS Main Page --> Announcements section
+Open any current BAR SEG Memo file for the fiscal year in review. This generally occurs in February for the 40d Adjustment.",N/A
+8,Revenue,All,Districts/ Charters,Review Current Period for negative revenue values ,"Statute
+22-8-13.3 B
+
+NMAC
+6.20.2.13 D","Excel file Current Period Column: filter by negative values
+
+Ask SBO for explanation, backup documentation is not required unless recommended by your supervisor.",Not cause for disapproval unless entity asks to reopen/reupload
+9,Revenue,All,Districts/ Charters,Review YTD for negative revenue  values,"Statute
+22-8-13.3 B
+
+NMAC
+6.20.2.13 D","Excel file YTD Column: filter by negative values
+
+Ask SBO for explanation, backup documentation is not required unless recommended by your supervisor.",Not cause for disapproval unless entity asks to reopen/reupload
+10,Revenue,All ,Districts/ Charters,Review Budget Balance for negative values,"NMAC
+6.20.2.8 A.
+6.20.2.9 A","Excel file Budget Balance Column: filter by negative values
+Excel file Obj Column: filter out 41980
+
+EXCEPTION: Not applicable to object 41980 -prior year expenditure reimbursements.
+
+Recommend to SBO to conduct BARs for revenue received but not yet budgeted as this may cause negative budget at the function level for expenditures.
+","Not cause for disapproval unless entity asks to reopen/reupload.  The more likely fix requires  BAR(s); however, revenue could potentially be posted to wrong accounts and could require J/Es."
+11,Revenue,xxxx.0000.41980,Districts/ Charters,Coding of prior year refunds and prior year reimbursements,PSAB Supplement 3,"Excel file Obj Column: filter by 41980
+
+Ensure that revenue object 41980 is truly for refunds issued to the LEA from vendors for returned merchandise or services pertaining to prior year expenditures and not for reimbursement requests for expenditures incurred during the prior year.  If the SBO claims they are for the latter, provide the below guidance.
+
+Guidelines for revenue received in the current year that pertains to reimbursement requests for expenditures incurred during the prior year:
+24xxx (PED Federal Flowthrough) – 44504 Federal Flow-Through Prior Year
+25xxx (Federal Direct) – 44301 Other Restricted Grants - Federal Direct
+27xxx (PED State Flowthrough) – 43204 State Flow-Through Prior Year
+28xxx (State Direct)- 43203 State Direct Grants
+other funds (discuss with supervisor what is appropriate)",Not cause for disapproval and a reopen/reupload will not fix this as it requires a BAR(s) to fix.
+12,Revenue,11000.0000.43101,Districts/ Charters,Current Period equals Current Period of SEG file from the FTS.,"
+Statute
+22-8-15
+22-8-25 E.","Excel file Obj Column: Filter on 43101
+
+Excel file Current Period amount should equal FTS SEG File amounts in:
+
+Quarterly Reporting -  Column ""20XX-20XX QX TOTAL SEG PAYMENTS"", except Local Charters Column ""20XX-20XX QX TOTAL 98% SEG Local Charter PAYMENTS""
+
+Monthly Reporting - Column ""TOTAL SEG MONTH 20XX"", except Local Charters Column ""TOTAL SEG MONTH 20XX"" multiplied by 98%
+
+There are times when a mismatch could be accurate for example, in Q4 an budget entity who has not received June SEG in the month of June. This will also cause a mismatch in the following year Q1 as the entity will likely receive June SEG in July.","Not cause for disapproval if the explanation makes sense; otherwise, disapproval and resubmission  is required."
+13,Revenue,11000.0000.43101,Districts/ Charters,YTD equals the SEG file from the FTS.,"
+Statute
+22-8-15
+22-8-25 E.","Excel file Obj Column: Filter on 43101
+
+Current Period amount should equal FTS SEG File amounts in:
+
+Column ""Fiscal Year To Date TOTAL SEG PAYMENTS"", except Local Charters Column ""Fiscal Year To Date TOTAL 98% SEG Local Charter PAYMENTS""
+
+There are times when a mismatch could be accurate for example, in Q4 an budget entity who has not received June SEG in the month of June. This will also cause a mismatch in the following year Q1 as the entity will likely receive June SEG in July.
+","Not cause for disapproval if the explanation makes sense; otherwise, disapproval and resubmission  is required."
+14,Revenue,11000.0000.43101,Districts/ Charters,Adjusted Budget equals the SEG Bar Memo file from the FTS.,"
+Statute
+22-8-15
+22-8-25 E.
+
+NMAC
+6.20.2.8 A.
+6.20.2.10 A. B.
+","Excel file Obj Column: Filter on 43101
+
+Adjusted Budget amount should equal FTS SEG BAR Memo ""Budget as Adjusted"" amount.
+
+Make note and have conversation with SBO to submit a BAR using the FTS SEG BAR Memo as backup documentation. This check should occur in Q3 and follow-ups should occur if this is not completed as the BAR window closes on 6/30.",Not cause for disapproval and a reopen/reupload will not fix this as it requires a BAR to fix.
+15,Revenue,11000.0000.44103,Some Districts/ Some Charters,0%-25% of total Impact Aid,"Statute
+22-8-13.3 B
+
+NMAC
+6.20.2.8 A.
+6.20.2.10 A. B.","Excel file Excel file Obj Column: Filter on 44103
+
+Data enter the YTD amount in respective cell on the Impact Aid_Local Revenue sheet. Ensure that 0%-25% of total Impact Aid is being reflected in Fund 15100.
+
+Data Enter the Budget as Adjusted amount in resepctve cell on the Impact Aid_Local Revenue sheet.  Ensure that 0%-25% of total Impact Aid is being reflected in Fund 15100.",M1-M11 and Q1-Q3 not cause for disapproval unless entity asks to reopen/reupload.  Should be corrected by M12/Q4.
+16,Revenue,"15100.0000.44103
+41200.0000.44103",Some Districts/ Some Charters,75%-100% of total Impact Aid,"Statute
+22-8-13.3 B
+
+NMAC
+6.20.2.8 A.
+6.20.2.10 A. B.","Excel file Obj Column: Filter on 44103
+
+Data enter the YTD amount in respective cell on the Impact Aid_Local Revenue sheet. Ensure that 75%-100% of total Impact Aid is being reflected in the sum of Fund 15100 and Fund 41200.
+
+Data enter the Budget As Adjusted amount in respective cell on the Impact Aid_Local Revenue sheet. Ensure that 75%-100% of total Impact Aid is being reflected in the sum of Fund 15100 and Fund 41200.",M1-M11 and Q1-Q3 not cause for disapproval unless entity asks to reopen/reupload.  Should be corrected by M12/Q4.
+17,Revenue,11000.0000.41110,Most Districts,0%-25% of total Ad Valorem Taxes,"Statute
+22-8-13.3 B
+
+NMAC
+6.20.2.8 A.
+6.20.2.10 A. B.","Excel file Obj Column: Filter on 41110
+
+Data enter the YTD amount in respective cell on the Impact Aid_Local Revenue sheet. Ensure that 0%-25% of total Ad Valorem Taxes revenue is being reflected in Fund 11000.
+
+Data enter the Budget as Adjusted amount in respective cell on the Impact Aid_Local Revenue sheet. Ensure that 0%-25% of total Ad Valorem Taxes revenue is being reflected in Fund 11000.",M1-M11 and Q1-Q3 not cause for disapproval unless entity asks to reopen/reupload.  Should be corrected by M12/Q4.
+18,Revenue,15200.0000.41110,Most Districts,0%-75% of total Ad Valorem Taxes,"Statute
+22-8-13.3 B 
+
+NMAC
+6.20.2.8 A.
+6.20.2.10 A. B.","Excel file Obj Column: Filter on 41110
+
+Data enter the YTD amount in respective cell on the Impact Aid_Local Revenue sheet. Ensure that 75%-100% of total Ad Valorem Taxes revenue is being reflected in Fund 15200.
+
+Data enter the Budget as Adjusted amount in respective cell on the Impact Aid_Local Revenue sheet. Ensure that 75%-100% of total Ad Valorem Taxes revenue is being reflected in Fund 15200.",M1-M11 and Q1-Q3 not cause for disapproval unless entity asks to reopen/reupload.  Should be corrected by M12/Q4.
+19,Revenue,11000.0000.41113,Some Districts,0%-25% of total Oil and Gas Taxes,"Statute
+22-8-13.3 B 
+
+NMAC
+6.20.2.8 A.
+6.20.2.10 A. B.","Excel file Obj Column: Filter on 41113
+
+Data enter the YTD amount in respective cell on the Impact Aid_Local Revenue sheet. Ensure that 0%-25% of total Oil and Gas Taxes revenue is being reflected in Fund 11000.
+
+Data enter the Budget as Adjusted amount in respective cell on the Impact Aid_Local Revenue sheet. Ensure that 0%-25% of total Oil and Gas Taxes revenue is being reflected in Fund 11000.",M1-M11 and Q1-Q3 not cause for disapproval unless entity asks to reopen/reupload.  Should be corrected by M12/Q4.
+20,Revenue,15200.0000.41113,Some Districts,75%-100% of total Oil and Gas Taxes,"Statute
+22-8-13.3 B 
+
+NMAC
+6.20.2.8 A.
+6.20.2.10 A. B.","Excel file Obj Column: Filter on 41113
+
+Data enter the YTD amount in respective cell on the Impact Aid_Local Revenue sheet. Ensure that 75%-100% of total Oil and Gas Taxes revenue is being reflected in Fund 15200.
+
+Data enter the Budget as Adjusted amount in respective cell on the Impact Aid_Local Revenue sheet. Ensure that 75%-100% of total Oil and Gas Taxes revenue is being reflected in Fund 15200.",M1-M11 and Q1-Q3 not cause for disapproval unless entity asks to reopen/reupload.  Should be corrected by M12/Q4.
+21,Revenue,11000.0000.41114,Some Districts,0%-25% of total Copper Taxes,"Statute
+22-8-13.3 B 
+
+NMAC
+6.20.2.8 A.
+6.20.2.10 A. B.","Excel file Obj Column: Filter on 41114
+
+Data enter the YTD amount in respective cell on the Impact Aid_Local Revenue sheet. Ensure that 0%-25% of total Copper Taxes revenue is being reflected in Fund 11000.
+
+Data enter the Budget as Adjusted amount in respective cell on the Impact Aid_Local Revenue sheet. Ensure that 0%-25% of total Copper Taxes revenue is being reflected in Fund 11000.",M1-M11 and Q1-Q3 not cause for disapproval unless entity asks to reopen/reupload.  Should be corrected by M12/Q4.
+22,Revenue,15200.0000.41114,Some Districts,75%-100%% of total Copper Taxes,"Statute
+22-8-13.3 B 
+
+NMAC
+6.20.2.8 A.
+6.20.2.10 A. B.","Excel file Obj Column: Filter on 41114
+
+Data enter the YTD amount in respective cell on the Impact Aid_Local Revenue sheet. Ensure that 75%-100% of total Copper Taxes revenue is being reflected in Fund 15200.
+
+DData enter the Budget as Adjusted amount in respective cell on the Impact Aid_Local Revenue sheet. Ensure that 75%-100% of total Copper Taxes revenue is being reflected in Fund 15200.",M1-M11 and Q1-Q3 not cause for disapproval unless entity asks to reopen/reupload.  Should be corrected by M12/Q4.
+23,Revenue,11000.0000.44204,Most Districts,0%-25% of total Forest Reserve,"Statute
+22-8-13.3 B 
+
+NMAC
+6.20.2.8 A.
+6.20.2.10 A. B.","Excel file Obj Column: Filter on 44204
+
+Generally not disbursed until Q4; check Forest Reserve PDF on website Budget Files
+
+Data enter the YTD amount in respective cell on the Impact Aid_Local Revenue sheet. Ensure that 0%-25% of total Forest Reserve revenue is being reflected in Fund 11000. 
+
+Data enter the Budget as Adjusted amount in respective cell on the Impact Aid_Local Revenue sheet. Ensure that 0%-25% of total Forest Reserve revenue is being reflected in Fund 11000. 
+
+Ensure 100% of Forest Reserve is being receipted in the sum of fund 11000 and 15200 in comparison to the Forest Reserve file on SBB website in Budget Files.",Should be correct in M12/Q4.
+24,Revenue,15200.0000.44204,Most Districts,75%-100% of total Forest Reserve,"Statute
+22-8-13.3 B
+
+NMAC
+6.20.2.10","Excel file Obj Column: Filter on 44204
+
+Generally not disbursed until Q4
+
+Data enter the YTD amount in respective cell on the Impact Aid_Local Revenue sheet. Ensure that 75%-100% of total Forest Reserve revenue is being reflected in Fund 15200.
+
+Data enter the Budget as Adjusted amount in respective cell on the Impact Aid_Local Revenue sheet. Ensure that 75%-100% of total Forest Reserve revenue is being reflected in Fund 15200.
+
+Ensure 100% of Forest Reserve is being receipted in fund 11000 and 15200 in comparison to the Forest Reserve file on SBB website in Budget Files.",Should be correct in M12/Q4.
+25,Revenue,21100.xxxx.xxxxx.xxxx,Most Districts / Most Charters,Universal Free Meals Revenue,"Statute
+22-13C-4
+
+PSAB Supplement 3","Excel file Fund Column: Filter on 21100
+YTD amount should be present.
+
+Excel file Fund Column: Filter on 21000
+Obj Column: Filter on 43202
+If revenue a YTD amount is present this must be moved to fund 21100.
+
+If YTD amount is being recorded in fund 21000 and not 21100; make note and have a conversation with SBO and ask if they are receiving reimbursements under Universal Free Meals and if yes, the revenue should be recorded in fund 21100.",M1-M11 and Q1-Q3 not cause for disapproval unless entity asks to reopen/reupload.  Should be corrected by M12/Q4.
+26,Revenue,GRAND TOTAL,Districts/ Charters,"Q1 Current Period Revenue Grand Total SHOULD equal the YTD Grand Total 
+Q2-Q4 Current Period Revenue Grand Total SHOULD NOT equal the YTD Grand Total","Statute
+22-8-13.3 B","Excel file Fund Column: Filter on Grand Total
+
+M1/Q1
+Current Period column Grand Total SHOULD equal the YTD column Grand Total
+
+M2-M12 and Q2-Q4
+Current Period column Grand Total SHOULD NOT equal the YTD column Grand Total",Requires disapproval and corrections.
+27,Expenditures,Picture,,Run Actuals Expenditure report,,"Excel file Fund Column: Filter on Grand Total
+
+Does not apply to Q1, ONLY for M2-M12 and Q2-Q4
+Current Period column Grand Total SHOULD NOT equal the YTD column Grand Total",N/A
+28,Expenditures,All,Districts/ Charters,Review Current Period for negative expenditure values ,"Statute
+22-8-13.3 B
+
+NMAC
+6.20.2.13 D","Excel file Current Period Column: filter by negative values
+
+Ask the SBO for explanation i.e. if this is actually revenue or why a negative Current Period amount would exist. Q2-Q4 negative Current Period amounts could indicate journal entries to move expenditures to a different UCOA line. No backup documentation is required, i.e. do not ask for journal entries unless you have discussed with your supervisor",Not cause for disapproval unless entity asks to reopen/reupload
+29,Expenditures,All,Districts/ Charters,Review YTD for negative expenditure values,"Statute
+22-8-13.3 B
+
+NMAC
+6.20.2.13 D","Data Filter by Row 7, then use the dropdown in column K, filter negatives by adding a ""(""  and clicking OK.
+
+Ask the SBO if this is actually revenue or why a negative YTD amount would exist. This is an uncommon situation and further guidance should be sought if this occurs for the same entity across multiple quarters for the same lines.",Not cause for disapproval unless entity asks to reopen/reupload
+30,Expenditures,All,Districts/ Charters,Review Encumbrance for negative values,"NMAC
+6.20.2.9 F","Encumbrance Column: filter by negative values
+
+Make note to SBO that negative encumbrances should not exist. Encumbrances are planned obligations i.e. requisitions or purchase orders.",M1-M11 and Q1-Q3 not cause for disapproval unless entity asks to reopen/reupload.  Should be corrected by M12/Q4.
+31,Expenditures,xxxxx.xxxx.51100.xxxx,Districts/ Charters,Object 51100 with $0 YTD and amounts have a 0 FTE ,"Statute
+22-8-13.3 B
+22-8-48
+
+PSAB Supplement 14 Payroll
+
+Manual of Procedures for the Calculation of the Staffing Cost Multiplier
+
+925F Report","Excel file Object Column: filter on 51100
+YTD Column: filter on $0
+FTE Column: ensure no FTE is present
+
+Make note to SBO that if not salary exists then not FTE should exist for all job class codes except substitutes, separation pay, and board members.",M1-M11 and Q1-Q3 not cause for disapproval unless entity asks to reopen/reupload.  Should be corrected by M12/Q4.
+32,Expenditures,"xxxxx.xxxx.51100.xxxx
+EXCEPT:
+xxxxx.xxxx.51100.1610
+xxxxx.xxxx.51100.1611
+xxxxx.xxxx.51100.1612
+xxxxx.xxxx.51100.1613
+xxxxx.xxxx.51100.1800",Districts/ Charters,Object code 51100; all Job Class codes except 1610-1613 and 1800 with >$0 YTD amounts  must have  >0 and reasonable FTE ,"Statute
+22-8-13.3 B
+22-8-48
+
+PSAB Supplement 14 Payroll
+
+Manual of Procedures for the Calculation of the Staffing Cost Multiplier
+
+925F Report","Excel file Object Column: filter on 51100
+YTD Column: filter and unselect $0
+Job Class Column: filter and unselect 1610, 1611, 1612, 1613 and 1800
+FTE Column: ensure an FTE is present and FTE is reasonable
+
+Make note to SBO that salaries for all job class codes except substitutes, separation pay, and board members should have an FTE and should be reasonable.  FTE should be calculated in accordance with the TCI manual on the SBB website --> Forms/Templates/Procedures. This will aid in a more accurate representation of average salaries on the 925F.
+
+If an hourly employee exists, please work with your supervisor on how to properly calculate the FTE.","M1-M11 and Q1-Q3 not cause for disapproval unless entity asks to reopen/reupload.  If FTE does not exist, an amount should be fixed in M12/Q4; if time allows, FTE reasonability should be fixed in M12/Q4; otherwise it can be corrected in 925F."
+33,Expenditures,"xxxxx.xxxx.51100.1610
+xxxxx.xxxx.51100.1611
+xxxxx.xxxx.51100.1612
+xxxxx.xxxx.51100.1613
+xxxxx.xxxx.51100.1800",Districts/ Charters,Object code 51100; Job Class 1610-1613 and 1800 must have 0 FTE,"Statute
+22-8-13.3 B
+22-8-48
+
+PSAB Supplement 14 Payroll
+
+Manual of Procedures for the Calculation of the Staffing Cost Multiplier
+
+925F Report","Excel file Object Column: filter on 51100
+Job Class Column: filter and only select 1610, 1611, 1612, 1613 and 1800
+FTE Column: ensure no FTE is present
+
+Make note to SBO that salaries for substitutes, separation pay, and board members should not have an FTE.",M1-M11 and Q1-Q3 not cause for disapproval unless entity asks to reopen/reupload.  Should be corrected by M12/Q4.
+34,Expenditures,"xxxxx.xxxx.51200.xxxx
+xxxxx.xxxx.51300.xxxx",Districts/ Charters,Objects 51200 and 51300 must have a 0 FTE,"Statute
+22-8-13.3 B
+22-8-48
+
+PSAB Supplement 14 Payroll
+
+Manual of Procedures for the Calculation of the Staffing Cost Multiplier
+
+925F Report","Excel file Object Column: filter on 51200 and 51300
+FTE Column: ensure no FTE is present
+
+Make note to SBO that benefits and additional compensation should not have an FTE.",M1-M11 and Q1-Q3 not cause for disapproval unless entity asks to reopen/reupload.  Should be corrected by M12/Q4.
+35,Expenditures,"xxxxx.1000
+xxxxx.2000 (rollup)
+xxxxx.3000 (rollup)
+xxxxx.4000
+xxxxx.5000",Districts/ Charters,Review Budget Balance at rollup Function level for negative values,"NMAC
+6.20.2.9 A","
+Excel file Obj Column: Filter on blanks
+Description column: Filter and type Subtotal
+Func Column: Filter on only 1000, 2000, 3000, 4000, and 5000
+Budget Balance Column: filter by negative values
+
+Make note to SBO that audit finding is possible and recommend a decrease to  encumbrances if applicable, move expenditures if allowable; or conduct BAR (BAR increase/decrease and transfer window closes 6/30).","Not cause for disapproval unless entity asks to reopen/reupload. If time allows, if encumbrances exist in the negative budget balance line they should be removed in M12/Q4."
+36,Expenditures,"xxxxx.1000.53330.0000
+xxxxx.2100.53330.0000",Districts/ Charters,Object 53330; function 1000 and 2100 Adjusted Budget and YTD Expenditure must have $0 amounts ,PSAB Supplement 3,"Excel file Obj Column: Filter on 53330
+Func Column: Filter on 1000 and 2100
+
+Make note to SBO that amounts in the Adjusted Budget and YTD Expenditure should not exist. Recommend expenditures be moved to the allowable functions for this expenditure Object which are 2200, 2300, 2400, 2500, 2600, 2700, 3100 and 3300","Not cause for disapproval unless entity asks to reopen/reupload. If time allows, and if expenditures exist in these lines, they should be moved to allowable functions in M12/Q4."
+37,Expenditures,"xxxxx.xxxx.58213.0000
+xxxxx.xxxx.58214.0000
+xxxxx.xxxx.58215.0000
+xxxxx.xxxx.58216.0000
+xxxxx.xxxx.58218.0000",Districts/ Charters,Perform check of line items that should not be used,PSAB Supplement 3,"Excel file Obj Column: Filter on 58213, 58214, 58215, 58216, 58218
+Ensure that no amounts are listed in the YTD column.
+
+Make note to SBO that although budget authority can exist in these lines, there should never be actual expenditures as these object codes are placeholders for budgeted cash.  Expenditures should be moved to the appropriate expenditure line per the UCOA.",M1-M11 and Q1-Q3 not cause for disapproval unless entity asks to reopen/reupload.  Should be corrected by M12/Q4.
+38,Expenditures,"11000.4000.54500
+11000.4000.57200",Districts,Operational Fund - Construction and Building Acquisition Expenditures and Budget require Approval by Director,"Statute
+22-8-41","Fund Column: Filter on 11000
+Func Column: Filter on 4000
+Obj Column: Filter on 54500, 57111, 57112, 57200
+Ensure that no amounts are listed in the YTD column or the Adjusted Budget column.
+
+Make note and have discussion with SBO on what these expenditures entail.  Per statute 22-8-41 A school district shall not expend money from its operational fund for the acquisition of a building site or for the construction of a new structure, unless the school district has bonded itself to practical capacity or the secretary determines and certifies to the legislative finance committee that the expending of money from the operational fund for this purpose is necessary for an adequate public educational program and will not unduly hamper the school district's current operations.
+",Not cause for disapproval unless entity asks to reopen/reupload
+39,Expenditures,21100.xxxx.xxxxx.xxxx,Districts/ Charters,Universal Free Meal Expenditures,"Statute
+22-13C-4
+
+PSAB Supplement 3","Excel file Fund Column: Filter on 21100
+Ensure amounts are listed in the YTD column.
+
+Make note and discuss with SBO as to why expenditures are not occurring out of this line item.",M1-M11 and Q1-Q3 not cause for disapproval unless entity asks to reopen/reupload.  Should be corrected by M12/Q4.
+40,Expenditures,GRAND TOTAL,Districts/ Charters,"Q1 Current Period Expenditures Grand Total SHOULD equal the YTD Grand Total 
+Q2-Q4 Current Period Expenditures  Grand Total SHOULD NOT equal the YTD Grand Total","Statute
+22-8-13.3 B","Excel file Fund Column: Filter on Grand Total
+
+M1/Q1
+Current Period column Grand Total SHOULD equal the YTD column Grand Total
+
+M2-M12 and Q2-Q4
+Current Period column Grand Total SHOULD NOT equal the YTD column Grand Total",Requires disapproval and corrections.
+41,Expenditures,Picture,,Run Actuals Expenditure Detail Report,,"OBMS: Reports-->Actuals Reports-->Actuals Expenditure Detail Rollup Report
+Select ""Budget Year,"" for the period being reviewed; select ""entity name;"" select ""Actuals Reporting Period ""month or quarter"" or the period being reviewed; click ""View Report and export to Excel by clicking on disk icon and clicking Excel.",N/A
+42,Expenditures,Picture,,Run Entity Relationships Report,,"OBMS: Reports --> Administrative Reports --> Entity Relationships Report
+Select ""Budget Year,"" for the period being reviewed; click ""View Report;"" export to Excel by clicking on disk icon and clicking Excel.",N/A
+43,Expenditures,Location level,Districts/ Mission Achievement Charter,Actuals at Location level,"Statute
+22-8-13.3 B","Entity Relationships Report / Child Type Column: Filter on ""School District Public School""
+Parent Name Column: Filter on Entity you are reviewing
+Make note of schools listed for the entity
+
+Actuals Expenditure Detail Report / Fund Column: Filter on 11000
+Location Column: Filter out 000 and blanks
+Job column: Filter out blanks
+
+Ensure reasonable amount of expenditures are being reported in the YTD column for each location code. Ensure the entity is reporting at each school listed as noted in the Entity Relationships Report.",M1-M11 and Q1-Q3 not cause for disapproval unless entity asks to reopen/reupload.  Should be corrected by M12/Q4.
+44,Cash Report and Bank,Correct Cash Report,Districts/ Charters,Ensure correct cash report is being utilized,, The most current cash report has a Summary Sheet.,"Not cause for disapproval; however, data should be transferred over to a valid cash report."
+45,Cash Report and Bank,Cash Report formulas,Districts/ Charters,Ensure cash report integrity,,Scrub the cash report to ensure formulas cells are locked and formulas have not been manipulated.,"Not cause for disapproval; however, data should be transferred over to a valid cash report."
+46,Cash Report and Bank,Header Section,Districts/ Charters,Review header information is correct and complete in comparison to the period being reviewed.,,"Ensure budget entity entered their name, and correct PED # .
+Ensure M/Q, previous year, and report end date are correct for the period being reviewed.  
+
+Blanks or wrong values need to be corrected.",Not cause for disapproval.
+47,Cash Report and Bank,"Line 1
+Total Cash Balance 06/30/20XX",Districts/ Charters,Tie current period Line 1 to prior year Q4 Line 7 until such time that audit becomes available then tie current period Line 1 to audited values,,"Until such time that the audit becomes available, verify that Line 1 ties to Line 7 of previous fiscal year’s M12 or Q4 cash report.  Allow $2+ or $2- variance
+
+Once audit (draft or final) is available, work with SBO and ensure all funds (including funds not under SBB purview) with a balance sheet are entered correctly in alignment with “Guidelines for Determining Final Cash Position from a Balance Sheet Statement of Governmental Funds” into the cash module in OBMS. Line 1 should then tie to these values. Allow $2+ or $2- variance",Not cause for disapproval.
+48,Cash Report and Bank,"Line 2
+Current Year Revenue to Date
+",Districts/ Charters,Current Year Revenue To Date must correspond with YTD values for each fund.,,"Compare Line 2 values by fund with YTD value totals by fund on the revenue report to ensure they are exactly the same.  If they do not match, ask entity if the cash report needs to be revised or the OBMS upload.",Disapprove only if OBMS needs to be corrected and entity is ready to resubmit. 
+49,Cash Report and Bank,"Line 5
+Current Year Expenditures to Date",Districts/ Charters,Current Year Expenditures To Date must correspond with YTD values for each fund as listed within the budget entity's Actuals Expenditure Rollup Report.,,"Compare Line 5 values by fund with column K YTD value totals by fund to ensure they are exactly the same. If they do not match, ask entity if the cash report needs to be revised or the OBMS upload.",Disapprove only if OBMS needs to be corrected and entity is ready to resubmit. 
+50,Cash Report and Bank,Expenditures/Revenue Spending,Districts/ Charters,Expenditures exceeding Revenue received in non-reimbursable funds,,"Are expenditures exceeding revenue received in non-reimbursable funds taking into consideration cash balances? Most important funds are 11000, 15100, 15200. Discuss with Supervisor on how to discuss with SBO",Not cause for disapproval.
+51,Cash Report and Bank,"Line 6
+Permanent Cash Transfers/Reversions
+",Districts/ Charters,Review the cash report to determine if any values are entered on this line for any funds and if those values are appropriate.,,"Go the budget entity's subsite for the current year-->Permanent Cash Transfers folder and determine if we have an approved PCT or supporting documentation for a reversion.  The amounts listed on that or those PCTs should correspond, in total, to the values listed on this line.
+
+If a PCT is in process or not yet submitted, line 6 should not record any values yet. It is worth noting that although not under SBB control, Transportation (Fund 13000) allows for a 50% reversion of their cash balance that does not require a PCT and most likely will be listed on this line.",Not cause for disapproval.
+52,Cash Report and Bank,"Line 7
+Total Cash",Districts/ Charters,Review for negative cash balances on non-reimbursable funds,,"Discuss with supervisor if non reimbursable funds are negative. Make note to SBO
+
+Funds 27xxx (except 27109), 24xxx, should be negative.
+Some funds within 25xxx, 26xxx, 28xxx, 29xxx, can be negative as they may be on reimbursement basis.
+21000 and 21100 are on reimbursement basis based on a set rate and the number of meals served.  A budget entity can carry a cash balance and more than likely these funds will not be negative but they have the potential to be negative.
+31200 is more often negative but recently there are awards not on RfR basis
+",Not cause for disapproval.
+53,Cash Report and Bank,"Line 8
+Payroll Liabilities
+",Districts/ Charters,"Payroll Liabilities should be positive and professional judement  if it is not a plug.
+",,"This is a self reported cell; however, professional judgement should be used whether or not to question if these are true payroll liabilities or a plug to make the cash report balance.  These amounts should generally be positive.",Not cause for disapproval.
+54,Cash Report and Bank,"Line 11
+Total Outstanding Loans",Districts/ Charters,"Line 11
+Total Outstanding Loans",,"Ensure that the following conditions are met for this line:
+1.Line 11 should always be >=$0 except in Fund 11000, which should be <=$0. Fund 11000 is the only fund that can temporarily loan other funds as the budget entity waits on reimbursement. Reimbursable funds have a negative line 10 and Operational loans the corresponding positive value to in order to cause a zero value in line 12.
+2. The grand total of line 11 must be $0.
+3. Fund 11000 should not loan to Funds 22000 and 23000 as these are self-sufficient funds, not reimbursement based and should not be negative. Conversation with SBO to move expenditures to Fund 11000.
+4.  If Line 10 in fund 11000 is negative, the entity cannot loan to other funds as there is no available cash to loan the entity must reflect the actual fund in which temporary loans are being made. If line 12 in fund 11000 is negative, the entity must reflect the actual fund in which temporary loans are being made.  Discuss with supervisor.",Not cause for disapproval unless entity asks to reopen/reupload
+55,Cash Report and Bank,31100 and 31900,Most Districts,Bonds,,"You can find active bonds here FTS: budget entity-->Bonds->Active Bonds.  If revenue is being receipted in either of these funds, ensure an active Bond is on file (the retirement schedule issued in current FY total amount should equal the amount of revenue receipted).  If this is not the case and revenue is being receipted here, there is probably an error with how the entity is coding bonds through NMFA.  The only time revenue should be receipted is for interest, investments, object 41980 (if it is a true refund) or sale of bond in the current fiscal year (not reimbursement from NMFA).  If a charter has an amount here, discuss with supervisor next steps.",N/A
+56,Cash Report and Bank,Individual Bank Statement,Districts/ Charters,Bank Statements are correct and ending balances matches the cash report,,"Review each bank statement in comparison to the values listed in the From Bank Statements section on the last page of the cash report.
+
+The Account Name, Bank and Statement Balance are the only cells that can be verified.
+
+Verify entity name, end date and ending balance on each statement. Ensure that the end date coincides with the end date of the period being reviewed, the budget entity is the budget entity being reviewed and the ending balance matches what is entered on the cash report for that account.",Not cause for disapproval unless entity asks to reopen/reupload
+57,Cash Report and Bank,Adjusted Bank Statement,Districts/ Charters,Adjusted Bank Statement,,"Ensure description and amount make sense; otherwise, have discussion with SBO on what the amount is",Not cause for disapproval unless entity asks to reopen/reupload
+58,Cash Report and Bank,Reconciliation Section,Districts/ Charters,No Bank-to-Book Variance,,"Ensure that the entity is RECONCILED in column K after the bank Statements as noted by the 0.00 value.  Any other value implies a bank-to-book variance that the budget entity will have to research further and fix before approval.
+The Total Outstanding Loans has another built-in check where the total amount must equal 0.00 or the cash report will state ERROR, denoting that a fix is required on these loans to offset one another.",Not cause for disapproval unless entity asks to reopen/reupload
+59,Cash Report and Bank,"Explanation
+***TOTAL OUTSTANDING LOANS (LINE 11)***",Districts/ Charters,Reasonable Explanation Provided for Temporary Loans,,"The first cells in that section should show the Fund 11000 with a negative amount and explanations as to what funds have been temporarily loaned cash.  The remaining entries should show the positive amounts that in sum total equal the amount of the negative amount from Fund 11000, each with an explanation. ",Not cause for disapproval unless entity asks to reopen/reupload
+60,Cash Report and Bank,"Explanation
+Adjustments (Line 9)",Districts/ Charters,Reasonable Explanation Provided for Adjustments,,"Verify that language appropriate to the line is entered into the tan cells under the Adjustments section
+
+This is not used to adjust to cash or to balance when the inability to reconcile exists.
+
+Verify that values are only entered on this line for one of two things:
+1. revenue recorded, but not yet received
+2. an expenditure that has not yet been liquidated",Not cause for disapproval.
+61,Cash Report and Bank,Cash Report on Website,Districts/ Charters,Cash Report on Website,"Statute
+22-8-13.2",Ensure budget entity has the cash report on their website required per statute.,Not cause for disapproval.
+62,Audit,Audit findings,Districts/ Charters,Audit findings,,"
+Until such time that audit becomes available, address audit findings as noted in Director or Deputy Secretary comments of the most recent operating budget checklist found in the FTS\SBB_Opbud_Review\FY##\3 COMPLETED Budget Review. Make note and have discussion with SBO on what the progress is on clearing the finding.
+
+Once audit is available, review relevant SBB audit findings. Make note and have discussion with SBO on what the progress is on clearing the finding. If you are unsure if an audit finding is relevant, please discuss with your supervisor. Bring egregious audit findings to the attention of your supervisor i.e. material weakness findings, repeat findings not addressed for several years, modified/disclaimer opinions.",Not cause for disapproval.
+63,Other,Picture,Districts/ Charters,RfR Summary Report,,"OBMS: Reports --> RfR Reports --> RfR Summary Report
+Select ""Budget Year,"" for the period being reviewed; select ""Entity"" Name"" click ""View Report;"" export to Excel by clicking on disk icon and clicking Excel.
+
+Entity's should submit 2 RfRs per month per fund. Review the fund and submit date to see if the entity is being consistent with submitting RfRs timely.",Not cause for disapproval.
+64,Other,Contact Info,Districts/ Charters,Contact Info,Internal Controls,"Each quarter, list the Business Manager and Superintendent/Charter Rep in the comments and ask SBO if this is still correct. If incorrect, please ask entity to correct the ""Contact Info"" file and place a copy in the Final reports folder, for example FY25 belongs in this folder Z:\SBB_Final Reports\Shared Documents\FY24\FY25 Contact Info",Not cause for disapproval unless entity asks to reopen/reupload
+65,Other,,Districts/ Charters,Other,,"Any additional issues/red flags not captured in checklist that you find notable as well as the governance of entity, business manager responsiveness, etc.",Not cause for disapproval unless entity asks to reopen/reupload
+66,Final Reports,OBMS Users (Q4 Only),Districts/ Charters,OBMS Users (Q4 Only),Internal Controls,Suggested Method/Notes TBD,Not cause for disapproval unless entity asks to reopen/reupload
+67,Final Reports,Contact Info (Q4 Only),Districts/ Charters,Contact Info (Q4 Only),Internal Controls,Suggested Method/Notes TBD,Not cause for disapproval unless entity asks to reopen/reupload
+68,Final Reports,925F (Q4 Only),Districts/ Charters,925F (Q4 Only),,Suggested Method/Notes TBD,Not cause for disapproval unless entity asks to reopen/reupload
+69,Final Reports,OBMS Users Cert (Q4 Only),Districts/ Charters,OBMS Users Cert (Q4 Only),Internal Controls,Suggested Method/Notes TBD,Not cause for disapproval unless entity asks to reopen/reupload
+70,Final Steps,Feedback Memo,Districts/ Charters,,,"The ""Quarterly Feedback"" sheet of this excel workbooks serves as the feedback memo.  On this sheet, please make rows larger so that all comments are visible. Your comments in this sheet in the ""Q1/Q2/Q3/Q4 Findings Memo Notes"" columns automatically transfer to the ""Quarterly Feedback"" sheet.  Ensure your comments contain distinct discussions on errors/issues and inlcude proposed corrective actions and/or reason(s) for withholding OBMS approval such as additional documents or fixes are required.  The notes should also address if a disapproval is required and why the disapproval had to occur.  Ensure you notify SBO of the completed feedback memo and request they provide their comments. There are columns for the SBO to provide comments on the ""Quarterly Feedback"" sheet.  
+
+Save a copy of this excel using approved naming convention and in appropriate FTS folder for M/Q being reviewed.",N/A
+71,Final Steps,Approve or Disapprove Actuals in OBMS,Districts/ Charters,,,"In OBMS, navigate to the Actuals module, select Budget year, select Entity, select Reporting Period and then clicking Retrieve.  The Approve or Disapprove buttons will be directly below that.",N/A
