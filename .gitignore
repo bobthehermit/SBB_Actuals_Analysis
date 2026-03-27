@@ -1,9 +1,5 @@
 # Archive folder
 archive/
-
-# Streamlit config
-.streamlit/
-
 # Python
 __pycache__/
 *.pyc
