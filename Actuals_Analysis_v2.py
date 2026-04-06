@@ -2555,6 +2555,9 @@ if 'notes_by_step' not in st.session_state:
     for item in st.session_state.checklist_data:
         st.session_state.notes_by_step[item['step']] = item.get('user_notes', "")
 
+if 'welcome_dismissed' not in st.session_state:
+    st.session_state.welcome_dismissed = False
+
 # ---------- NOTES PERSISTENCE CALLBACK ----------
 def save_note_callback(step_id: int):
     '''Callback to immediately save notes when changed - fixes notes not saving issue'''
@@ -2577,9 +2580,126 @@ def render_findings_table(step_id: int, table_findings: Dict):
             st.caption(f"📋 {title}")
             st.dataframe(df, use_container_width=True, hide_index=True)
 
+@st.dialog("Welcome to Actuals Analysis & Compliance", width="large")
+def render_welcome_modal():
+    """
+    One-time welcome walkthrough for new users.
+    Uses Streamlit's native dialog decorator (st.dialog).
+    """
+
+    # Step tracker inside the modal
+    if 'welcome_step' not in st.session_state:
+        st.session_state.welcome_step = 1
+
+    step = st.session_state.welcome_step
+
+    # --- STEP 1: Overview ---
+    if step == 1:
+        st.markdown("### What This App Does")
+        st.markdown(
+            "This tool automates the **quarterly actuals compliance review** "
+            "for New Mexico school districts and charter schools. It runs "
+            "**55+ automated checks** against your uploaded financial reports "
+            "and produces a detailed compliance checklist, flagged findings, "
+            "and exportable reports (Word memo, Excel tracker, and HTML dashboard)."
+        )
+        st.markdown(
+            "**You'll need three files** to run a complete review. "
+            "The next steps will show you where to find each one."
+        )
+        st.info(
+            "💡 **Tip:** You can still use the app with just a Cash Report — "
+            "revenue and expenditure checks will simply be skipped."
+        )
+        col_l, col_r = st.columns(2)
+        with col_r:
+            if st.button("Next →", use_container_width=True, key="w_next_1"):
+                st.session_state.welcome_step = 2
+                st.rerun()
+
+    # --- STEP 2: Where to get the files ---
+    elif step == 2:
+        st.markdown("### Where to Get Your Reports")
+
+        st.markdown("**① Cash Report** (Excel)")
+        st.markdown(
+            "Download from the district/charter's quarterly submission. "
+            "The app reads the **Summary** tab automatically. "
+            "Most analysts already have this file from the submission package."
+        )
+
+        st.markdown("**② Revenue Report & ③ Expenditure Report** (CSV or Excel)")
+        st.markdown(
+            "Pull these from the **OBMS Financial Explorer**:"
+        )
+        st.markdown(
+            "👉 [Open OBMS Financial Explorer]"
+            "(https://huggingface.co/spaces/bobthehermit/OBMS-Financial-Explorer)"
+        )
+        st.markdown(
+            "In the Explorer app:\n"
+            "- Go to the **Actuals** tab\n"
+            "- Select the entity and fiscal year\n"
+            "- Download the **Revenue Actuals** report (CSV)\n"
+            "- Download the **Expenditure Actuals** report (CSV)\n"
+        )
+        st.warning(
+            "⚠️ Make sure your Revenue and Expenditure reports are for the "
+            "**same entity and period** as your Cash Report."
+        )
+
+        col_l, col_r = st.columns(2)
+        with col_l:
+            if st.button("← Back", use_container_width=True, key="w_back_2"):
+                st.session_state.welcome_step = 1
+                st.rerun()
+        with col_r:
+            if st.button("Next →", use_container_width=True, key="w_next_2"):
+                st.session_state.welcome_step = 3
+                st.rerun()
+
+    # --- STEP 3: Workflow & saving ---
+    elif step == 3:
+        st.markdown("### How the Review Works")
+
+        st.markdown(
+            "**1. Upload** your three reports in the sidebar.\n\n"
+            "**2. Review** — The app runs automated checks and displays "
+            "results inside each checklist step. Steps with issues show "
+            "🚩 flags; clean steps show ✅.\n\n"
+            "**3. Add notes** — Use the notes field in each step to "
+            "record your analyst comments, questions for the district, "
+            "or follow-up items.\n\n"
+            "**4. Export** — Download your finished review as a Word memo, "
+            "Excel checklist tracker, or a full HTML visual dashboard."
+        )
+
+        st.markdown("---")
+        st.markdown("**💾 Saving Your Progress**")
+        st.markdown(
+            "Your work isn't lost if you close the browser. Use "
+            "**\"Save Your Progress\"** in the sidebar to download a session "
+            "file. To pick up where you left off, use **\"Resume a Previous "
+            "Review\"** and upload that file. It restores your uploaded data, "
+            "checklist progress, and all notes."
+        )
+
+        col_l, col_r = st.columns(2)
+        with col_l:
+            if st.button("← Back", use_container_width=True, key="w_back_3"):
+                st.session_state.welcome_step = 2
+                st.rerun()
+        with col_r:
+            if st.button("Get Started ✓", type="primary", use_container_width=True, key="w_done"):
+                st.session_state.welcome_dismissed = True
+                st.session_state.welcome_step = 1  # Reset for next time
+                st.rerun()
+
 # ---------- MAIN APP ----------
 
 def main():
+    if not st.session_state.welcome_dismissed:
+        render_welcome_modal()
     render_header(HEADER_TITLE, HEADER_SUB, LOGO_LEFT_PATH, LOGO_RIGHT_PATH, LOGO_LEFT_LINK, LOGO_RIGHT_LINK, SHOW_HEADER_LOGOS)
     render_sidebar_logo(SIDEBAR_LOGO_PATH)
 
@@ -2602,8 +2722,69 @@ def main():
     )
 
     with st.sidebar:
-        st.header("💾 Save/Resume Progress")
-        
+        # Help button
+        if st.button("❓ How to Use This App", use_container_width=True):
+            st.session_state.welcome_dismissed = False
+            st.rerun()
+
+        st.divider()
+
+        st.header("1. Review Settings")
+        is_q1 = st.radio("Review Period", ["Q1", "Q2-Q4"], index=1) == "Q1"
+
+        st.divider()
+
+        st.header("2. Upload Reports")
+
+        st.markdown("**① Cash Report**")
+        st.caption("Excel file from the district's quarterly submission (Summary tab).")
+        cash_file = st.file_uploader("Cash Report", type=['csv', 'xlsx', 'xls'],
+                                     key='cash', label_visibility="collapsed")
+        st.markdown("---")
+
+        st.markdown("**② Revenue Actuals Report**")
+        st.caption(
+            "CSV/Excel from "
+            "[OBMS Financial Explorer](https://huggingface.co/spaces/bobthehermit/OBMS-Financial-Explorer) "
+            "→ Actuals tab → Revenue download."
+        )
+        rev_file = st.file_uploader("Revenue Report", type=['csv', 'xlsx'],
+                                    key='rev', label_visibility="collapsed")
+        st.markdown("---")
+
+        st.markdown("**③ Expenditure Actuals Report**")
+        st.caption(
+            "CSV/Excel from "
+            "[OBMS Financial Explorer](https://huggingface.co/spaces/bobthehermit/OBMS-Financial-Explorer) "
+            "→ Actuals tab → Expenditure download."
+        )
+        exp_file = st.file_uploader("Expenditure Report", type=['csv', 'xlsx'],
+                                    key='exp', label_visibility="collapsed")
+
+        if cash_file:
+            st.session_state.cash_df = load_cash_from_excel(cash_file)
+        if rev_file:
+            st.session_state.revenue_df = load_report_file(rev_file, "Rev")
+        if exp_file:
+            st.session_state.expenditure_df = load_report_file(exp_file, "Exp")
+
+        st.divider()
+
+        if st.session_state.revenue_df is not None or st.session_state.expenditure_df is not None:
+            if not st.session_state.entity_name:
+                st.session_state.entity_name = detect_entity_name(
+                    st.session_state.revenue_df, st.session_state.expenditure_df
+                )
+        st.session_state.entity_name = st.text_input("Entity Name", value=st.session_state.entity_name)
+
+        st.divider()
+
+        st.header("3. Save / Resume Progress")
+        st.caption(
+            "Save your current review (uploaded data, checklist, and notes) "
+            "so you can close the browser and pick up later."
+        )
+
         current_state = {
             'checklist_data': st.session_state.checklist_data,
             'notes_by_step': st.session_state.notes_by_step,
@@ -2617,68 +2798,49 @@ def main():
             'step_47_last_year': st.session_state.get('step_47_last_year', 0.0),
             'step_47_this_year': st.session_state.get('step_47_this_year', 0.0),
         }
-        
+
         buffer = BytesIO()
         pickle.dump(current_state, buffer)
         buffer.seek(0)
-        
+
+        entity_slug = (st.session_state.entity_name.replace(' ', '_')
+                       if st.session_state.entity_name else "Review")
         st.download_button(
-            label="Download Session File",
+            label="💾 Save Your Progress",
             data=buffer,
-            file_name=f"Actuals_Session_{datetime.now().strftime('%Y%m%d')}.pkl",
+            file_name=f"Review_{entity_slug}_{datetime.now().strftime('%Y%m%d')}.pkl",
             mime="application/octet-stream",
-            help="Download a file containing your uploaded data and progress."
+            use_container_width=True,
+            help="Downloads a file that stores your entire review session."
         )
 
-        st.divider()
+        st.markdown("")
+        st.markdown("**Resume a Previous Review**")
+        st.caption("Upload a previously saved progress file to continue where you left off.")
+        uploaded_session = st.file_uploader("Resume session", type=["pkl"],
+                                           label_visibility="collapsed")
 
-        uploaded_session = st.file_uploader("Load Previous Session (.pkl)", type=["pkl"])
-        
         if uploaded_session is not None:
-            if 'last_loaded_file' not in st.session_state or st.session_state.last_loaded_file != uploaded_session.name:
+            if ('last_loaded_file' not in st.session_state
+                    or st.session_state.last_loaded_file != uploaded_session.name):
                 try:
                     data = pickle.load(uploaded_session)
-                    
                     st.session_state.checklist_data = data.get('checklist_data', [])
                     st.session_state.notes_by_step = data.get('notes_by_step', {})
                     st.session_state.cash_df = data.get('cash_df')
                     st.session_state.revenue_df = data.get('revenue_df')
                     st.session_state.expenditure_df = data.get('expenditure_df')
                     st.session_state.entity_name = data.get('entity_name', "")
-                    
                     st.session_state['step_6_period'] = data.get('step_6_period', 0.0)
                     st.session_state['step_6_ytd'] = data.get('step_6_ytd', 0.0)
                     st.session_state['step_7_budget'] = data.get('step_7_budget', 0.0)
                     st.session_state['step_47_last_year'] = data.get('step_47_last_year', 0.0)
                     st.session_state['step_47_this_year'] = data.get('step_47_this_year', 0.0)
-                    
                     st.session_state.last_loaded_file = uploaded_session.name
-                    
-                    st.success("Session Loaded!")
+                    st.success("✅ Session restored! Your data and notes are loaded.")
                     st.rerun()
                 except Exception as e:
                     st.error(f"Error loading session: {e}")
-
-        st.divider()
-
-        st.header("1. Review Settings")
-        is_q1 = st.radio("Review Period", ["Q1", "Q2-Q4"], index=1) == "Q1"
-        
-        st.header("2. Upload Reports")
-        cash_file = st.file_uploader("Cash Report (CSV or Excel)", type=['csv', 'xlsx', 'xls'], key='cash')
-        rev_file = st.file_uploader("Revenue Report", type=['csv', 'xlsx'], key='rev')
-        exp_file = st.file_uploader("Expenditure Report", type=['csv', 'xlsx'], key='exp')
-
-        if cash_file: st.session_state.cash_df = load_cash_from_excel(cash_file)
-        if rev_file: st.session_state.revenue_df = load_report_file(rev_file, "Rev")
-        if exp_file: st.session_state.expenditure_df = load_report_file(exp_file, "Exp")
-
-        st.divider()
-        if st.session_state.revenue_df is not None or st.session_state.expenditure_df is not None:
-            if not st.session_state.entity_name:
-                st.session_state.entity_name = detect_entity_name(st.session_state.revenue_df, st.session_state.expenditure_df)
-        
-        st.session_state.entity_name = st.text_input("Entity Name", value=st.session_state.entity_name)
 
     # --- MAIN CONTENT ---
     if st.session_state.cash_df is not None:
@@ -2879,7 +3041,19 @@ def main():
                     st.session_state.notes_by_step[step_id] = notes
                     st.session_state.checklist_data[idx]['user_notes'] = notes
     else:
-        st.info("👈 Please upload the Cash Report to begin.")
+        st.markdown("### 👋 Ready to Begin")
+        st.markdown(
+            "Upload your **Cash Report** in the sidebar to start the review. "
+            "For the full suite of automated checks, also upload the "
+            "**Revenue** and **Expenditure** Actuals reports."
+        )
+        st.info(
+            "**Need the Revenue or Expenditure reports?** "
+            "Download them from the "
+            "[OBMS Financial Explorer]"
+            "(https://huggingface.co/spaces/bobthehermit/OBMS-Financial-Explorer) "
+            "→ Actuals tab."
+        )
 
 if __name__ == "__main__":
     main()
