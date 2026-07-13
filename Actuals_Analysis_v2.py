@@ -127,10 +127,10 @@ def load_official_checklist() -> List[Dict]:
                 })
             return checklist
         except Exception as e:
-            st.error(f"❌ Error loading checklist CSV: {e}")
+            st.error(f"Error loading checklist CSV: {e}")
             return []
     else:
-        st.warning(f"⚠️ Checklist not found at: {CHECKLIST_FILE}")
+        st.warning(f"Checklist not found at: {CHECKLIST_FILE}")
         return []
 
 def load_report_file(file, name: str) -> Optional[pd.DataFrame]:
@@ -159,7 +159,7 @@ def load_cash_from_excel(file) -> Optional[pd.DataFrame]:
         xls = pd.ExcelFile(file)
         
         if 'Summary' not in xls.sheet_names:
-            st.error(f"❌ Could not find 'Summary' tab in {file.name}. Available tabs: {', '.join(xls.sheet_names)}")
+            st.error(f"Could not find 'Summary' tab in {file.name}. Available tabs: {', '.join(xls.sheet_names)}")
             return None
         
         df = pd.read_excel(xls, sheet_name='Summary', header=0)
@@ -184,12 +184,12 @@ def load_cash_from_excel(file) -> Optional[pd.DataFrame]:
         # Format: ENTITYNAME-FYxx-Qx-Cash-Report_-xxx-xxx.xlsx
         entity_hint = file.name.split('-')[0] if '-' in file.name else ""
         if entity_hint:
-            st.caption(f"📋 Cash report loaded from: **{file.name}** (Summary tab)")
+            st.caption(f"Cash report loaded from: **{file.name}** (Summary tab)")
         
         return df
         
     except Exception as e:
-        st.error(f"❌ Error reading cash report: {e}")
+        st.error(f"Error reading cash report: {e}")
         return None
 
 def detect_entity_name(rev_df, exp_df) -> str:
@@ -273,9 +273,13 @@ def run_all_validations(cash_df, revenue_df, expenditure_df, entity_name, is_q1,
     results = {} 
     table_findings = {}
 
-    def add_finding(step, msg, is_pass=False):
+    def add_finding(step, msg, is_pass=False, level=None):
+        """Record a finding. level: FLAG (issue), WARN (caution), PASS
+        (compliance highlight), INFO (context only). Defaults from is_pass."""
         if step not in results: results[step] = []
-        results[step].append(("PASS" if is_pass else "FLAG", msg))
+        if level is None:
+            level = "PASS" if is_pass else "FLAG"
+        results[step].append((level, msg))
 
     def add_table(step, df, title=""):
         if not df.empty:
@@ -372,7 +376,7 @@ def run_all_validations(cash_df, revenue_df, expenditure_df, entity_name, is_q1,
         if per_col:
             negs = r_df[r_df[per_col] < -0.01]
             if not negs.empty:
-                add_finding(8, f"🚩 Found {len(negs)} lines with NEGATIVE Period Amount (see table below)")
+                add_finding(8, f"Found {len(negs)} lines with NEGATIVE Period Amount (see table below)")
                 cols = {'Fund': 'Fund_Key', 'Object': 'Object_Key'}
                 if 'Function_Key' in r_df.columns:
                     cols['Function'] = 'Function_Key'
@@ -387,7 +391,7 @@ def run_all_validations(cash_df, revenue_df, expenditure_df, entity_name, is_q1,
         if ytd_col:
             negs = r_df[r_df[ytd_col] < -0.01]
             if not negs.empty:
-                add_finding(9, f"🚩 Found {len(negs)} lines with NEGATIVE YTD Amount (see table below)")
+                add_finding(9, f"Found {len(negs)} lines with NEGATIVE YTD Amount (see table below)")
                 cols = {'Fund': 'Fund_Key', 'Object': 'Object_Key'}
                 if 'Function_Key' in r_df.columns:
                     cols['Function'] = 'Function_Key'
@@ -403,7 +407,7 @@ def run_all_validations(cash_df, revenue_df, expenditure_df, entity_name, is_q1,
         if bal_col:
             negs = r_df[r_df[bal_col] < -0.01]
             if not negs.empty:
-                add_finding(10, f"🚩 Found {len(negs)} lines with NEGATIVE Available Balance (see table below)")
+                add_finding(10, f"Found {len(negs)} lines with NEGATIVE Available Balance (see table below)")
                 cols = {'Fund': 'Fund_Key', 'Object': 'Object_Key'}
                 if bud_col:
                     cols['Adjusted Budget'] = bud_col
@@ -424,7 +428,7 @@ def run_all_validations(cash_df, revenue_df, expenditure_df, entity_name, is_q1,
                     for _, row in refunds.iterrows():
                         if abs(row[ytd_col]) > 0.01:
                             details.append(f"Fund {row.get('Fund_Key', 'Unknown')}: ${row[ytd_col]:,.2f}")
-                    add_finding(11, f"⚠️ Object 41980 (Vendor Refunds) has activity - Total: ${total_refund:,.2f}. Details: {'; '.join(details)}")
+                    add_finding(11, f"Object 41980 (Vendor Refunds) has activity - Total: ${total_refund:,.2f}. Details: {'; '.join(details)}", level="WARN")
                 else:
                     add_finding(11, "Object 41980 has no significant activity", is_pass=True)
             else:
@@ -440,7 +444,7 @@ def run_all_validations(cash_df, revenue_df, expenditure_df, entity_name, is_q1,
                 add_finding(12, f"  • Actuals Period Amount: ${seg_period:,.2f}", is_pass=True)
                 add_finding(12, f"  • Actuals YTD Amount: ${seg_ytd:,.2f}", is_pass=True)
             else:
-                add_finding(12, "⚠️ SEG (Object 43101) not found in Fund 11000")
+                add_finding(12, "SEG (Object 43101) not found in Fund 11000", level="WARN")
         
         # --- STEP 13: SEG YTD Amount for Fund 11000 Object 43101 ---
         if 'Object_Key' in r_df.columns and ytd_col:
@@ -449,7 +453,7 @@ def run_all_validations(cash_df, revenue_df, expenditure_df, entity_name, is_q1,
                 seg_ytd = seg_rows[ytd_col].sum()
                 add_finding(13, f"SEG (43101) Fund 11000 YTD Amount: ${seg_ytd:,.2f}", is_pass=True)
             else:
-                add_finding(13, "⚠️ SEG (Object 43101) not found in Fund 11000")
+                add_finding(13, "SEG (Object 43101) not found in Fund 11000", level="WARN")
         
         # --- STEP 14: SEG Budgeted Amount (Adjusted Budget for Fund 11000 Object 43101) ---
         if 'Object_Key' in r_df.columns and bud_col:
@@ -458,7 +462,7 @@ def run_all_validations(cash_df, revenue_df, expenditure_df, entity_name, is_q1,
                 seg_budget = seg_rows[bud_col].sum()
                 add_finding(14, f"SEG (43101) Fund 11000 Adjusted Budget: ${seg_budget:,.2f}", is_pass=True)
             else:
-                add_finding(14, "⚠️ SEG (Object 43101) not found in Fund 11000 for budget check")
+                add_finding(14, "SEG (Object 43101) not found in Fund 11000 for budget check", level="WARN")
 
         # --- STEPS 15-16: Impact Aid (44103) Ratio Check ---
         if 'Object_Key' in r_df.columns and ytd_col:
@@ -485,17 +489,17 @@ def run_all_validations(cash_df, revenue_df, expenditure_df, entity_name, is_q1,
                     # Step 15: Fund 11000 should be 0-25%
                     fund_11000_pct = ratio_df[ratio_df['Fund'] == '11000']['Percentage'].sum() if '11000' in ratio_df['Fund'].values else 0
                     if fund_11000_pct > 25:
-                        add_finding(15, f"🚩 Impact Aid (44103) in Fund 11000: {fund_11000_pct:.1f}% (Should be ≤25%). Distribution: {ratio_str}")
+                        add_finding(15, f"Impact Aid (44103) in Fund 11000: {fund_11000_pct:.1f}% (Should be ≤25%). Distribution: {ratio_str}")
                     else:
-                        add_finding(15, f"✅ Impact Aid (44103) Fund 11000: {fund_11000_pct:.1f}% (within 0-25% limit). Distribution: {ratio_str}", is_pass=True)
+                        add_finding(15, f"Impact Aid (44103) Fund 11000: {fund_11000_pct:.1f}% (within 0-25% limit). Distribution: {ratio_str}", is_pass=True)
                     
                     # Step 16: Fund 15100 should be 75-100%
                     fund_15100_pct = ratio_df[ratio_df['Fund'] == '15100']['Percentage'].sum() if '15100' in ratio_df['Fund'].values else 0
                     if fund_15100_pct < 75:
-                        add_finding(16, f"🚩 Impact Aid (44103) in Fund 15100: {fund_15100_pct:.1f}% (Should be ≥75%)")
+                        add_finding(16, f"Impact Aid (44103) in Fund 15100: {fund_15100_pct:.1f}% (Should be ≥75%)")
                         
                     else:
-                        add_finding(16, f"✅ Impact Aid (44103) Fund 15100: {fund_15100_pct:.1f}% (within 75-100% limit)", is_pass=True)
+                        add_finding(16, f"Impact Aid (44103) Fund 15100: {fund_15100_pct:.1f}% (within 75-100% limit)", is_pass=True)
                     
                     # Show detail table for Impact Aid
                     cols = {'Fund': 'Fund_Key', 'Object': 'Object_Key'}
@@ -533,15 +537,15 @@ def run_all_validations(cash_df, revenue_df, expenditure_df, entity_name, is_q1,
                         
                         # Step 17: Fund 11000 should be 0-25%
                         if fund_11000_pct > 25:
-                            add_finding(17, f"🚩 Fund 11000 is {fund_11000_pct:.1f}% (Should be ≤25%)")
+                            add_finding(17, f"Fund 11000 is {fund_11000_pct:.1f}% (Should be ≤25%)")
                         else:
-                            add_finding(17, f"✅ Fund 11000 ratio OK: {fund_11000_pct:.1f}% (within 0-25%)", is_pass=True)
+                            add_finding(17, f"Fund 11000 ratio OK: {fund_11000_pct:.1f}% (within 0-25%)", is_pass=True)
                         
                         # Step 18: Fund 15200 should be 75-100%
                         if fund_15200_pct < 75:
-                            add_finding(18, f"🚩 Fund 15200 is {fund_15200_pct:.1f}% (Should be ≥75%)")
+                            add_finding(18, f"Fund 15200 is {fund_15200_pct:.1f}% (Should be ≥75%)")
                         else:
-                            add_finding(18, f"✅ Fund 15200 ratio OK: {fund_15200_pct:.1f}% (within 75-100%)", is_pass=True)
+                            add_finding(18, f"Fund 15200 ratio OK: {fund_15200_pct:.1f}% (within 75-100%)", is_pass=True)
                     else:
                         add_finding(17, "Ad Valorem (41110) in Funds 11000/15200: $0 YTD", is_pass=True)
                         add_finding(18, "Ad Valorem (41110) in Funds 11000/15200: $0 YTD", is_pass=True)
@@ -626,16 +630,16 @@ def run_all_validations(cash_df, revenue_df, expenditure_df, entity_name, is_q1,
                     # Step 23: Fund 11000 should be ≤25%
                     fund_11000_pct = next((r['Percentage'] for r in ratio_data if r['Fund'] == '11000'), 0)
                     if fund_11000_pct > 25:
-                        add_finding(23, f"🚩 Forest Reserve (44204) in Fund 11000: {fund_11000_pct:.1f}% (Should be ≤25%). Distribution: {ratio_str}")
+                        add_finding(23, f"Forest Reserve (44204) in Fund 11000: {fund_11000_pct:.1f}% (Should be ≤25%). Distribution: {ratio_str}")
                     else:
-                        add_finding(23, f"✅ Forest Reserve (44204) Fund 11000: {fund_11000_pct:.1f}%. Distribution: {ratio_str}", is_pass=True)
+                        add_finding(23, f"Forest Reserve (44204) Fund 11000: {fund_11000_pct:.1f}%. Distribution: {ratio_str}", is_pass=True)
                     
                     # Step 24: Fund 15200 should be ≥75%
                     fund_15200_pct = next((r['Percentage'] for r in ratio_data if r['Fund'] == '15200'), 0)
                     if fund_15200_pct < 75:
-                        add_finding(24, f"🚩 Forest Reserve (44204) in Fund 15200: {fund_15200_pct:.1f}% (Should be ≥75%)")
+                        add_finding(24, f"Forest Reserve (44204) in Fund 15200: {fund_15200_pct:.1f}% (Should be ≥75%)")
                     else:
-                        add_finding(24, f"✅ Forest Reserve (44204) Fund 15200: {fund_15200_pct:.1f}%", is_pass=True)
+                        add_finding(24, f"Forest Reserve (44204) Fund 15200: {fund_15200_pct:.1f}%", is_pass=True)
                     
                     # Show detail table for Forest Reserve
                     cols = {'Fund': 'Fund_Key', 'Object': 'Object_Key'}
@@ -653,9 +657,9 @@ def run_all_validations(cash_df, revenue_df, expenditure_df, entity_name, is_q1,
             if not fund_21100_rows.empty:
                 total_ytd = fund_21100_rows[ytd_col].sum()
                 if abs(total_ytd) > 0.01:
-                    add_finding(25, f"✅ Fund 21100 has YTD activity: ${total_ytd:,.2f}", is_pass=True)
+                    add_finding(25, f"Fund 21100 has YTD activity: ${total_ytd:,.2f}", is_pass=True)
                 else:
-                    add_finding(25, f"🚩 Fund 21100 has $0 YTD - Expected activity for Universal Free Lunch")
+                    add_finding(25, f"Fund 21100 has $0 YTD - Expected activity for Universal Free Lunch")
                 
                 cols = {'Fund': 'Fund_Key'}
                 if 'Object_Key' in r_df.columns: cols['Object'] = 'Object_Key'
@@ -665,7 +669,7 @@ def run_all_validations(cash_df, revenue_df, expenditure_df, entity_name, is_q1,
                 build_detail_table(fund_21100_rows, cols, 25, f"Fund 21100 Revenue Detail ({len(fund_21100_rows)} lines)")
 
             else:
-                add_finding(25, "⚠️ Fund 21100 not present in Revenue Report")
+                add_finding(25, "Fund 21100 not present in Revenue Report", level="WARN")
 
     # ==========================================
     # EXPENDITURE REPORT CHECKS
@@ -682,7 +686,7 @@ def run_all_validations(cash_df, revenue_df, expenditure_df, entity_name, is_q1,
         if per_col:
             negs = e_df[e_df[per_col] < -0.01]
             if not negs.empty:
-                add_finding(28, f"🚩 Found {len(negs)} lines with NEGATIVE Period Expenditures (see table below)")
+                add_finding(28, f"Found {len(negs)} lines with NEGATIVE Period Expenditures (see table below)")
                 cols = {'Fund': 'Fund_Key', 'Object': 'Object_Key'}
                 if 'Function_Key' in e_df.columns:
                     cols['Function'] = 'Function_Key'
@@ -699,7 +703,7 @@ def run_all_validations(cash_df, revenue_df, expenditure_df, entity_name, is_q1,
         if ytd_col:
             negs = e_df[e_df[ytd_col] < -0.01]
             if not negs.empty:
-                add_finding(29, f"🚩 Found {len(negs)} lines with NEGATIVE YTD Expenditures (see table below)")
+                add_finding(29, f"Found {len(negs)} lines with NEGATIVE YTD Expenditures (see table below)")
                 cols = {'Fund': 'Fund_Key', 'Object': 'Object_Key'}
                 if 'Function_Key' in e_df.columns:
                     cols['Function'] = 'Function_Key'
@@ -716,7 +720,7 @@ def run_all_validations(cash_df, revenue_df, expenditure_df, entity_name, is_q1,
         if enc_col:
             negs = e_df[e_df[enc_col] < -0.01]
             if not negs.empty:
-                add_finding(30, f"🚩 Found {len(negs)} lines with NEGATIVE Encumbrances (see table below)")
+                add_finding(30, f"Found {len(negs)} lines with NEGATIVE Encumbrances (see table below)")
                 cols = {'Fund': 'Fund_Key', 'Object': 'Object_Key'}
                 if 'Function_Key' in e_df.columns:
                     cols['Function'] = 'Function_Key'
@@ -732,7 +736,7 @@ def run_all_validations(cash_df, revenue_df, expenditure_df, entity_name, is_q1,
             salary_rows = e_df[e_df['Object_Key'] == '51100']
             bad_rows = salary_rows[(salary_rows[ytd_col] == 0) & (salary_rows[fte_col] > 0)]
             if not bad_rows.empty:
-                add_finding(31, f"🚩 Found {len(bad_rows)} salary lines with $0 YTD but >0 FTE (see table below)")
+                add_finding(31, f"Found {len(bad_rows)} salary lines with $0 YTD but >0 FTE (see table below)")
                 cols = {'Fund': 'Fund_Key'}
                 if 'Function_Key' in e_df.columns:
                     cols['Function'] = 'Function_Key'
@@ -754,7 +758,7 @@ def run_all_validations(cash_df, revenue_df, expenditure_df, entity_name, is_q1,
             # Check: YTD > 0 but FTE = 0
             bad_no_fte = relevant[(relevant[ytd_col] > 100) & (relevant[fte_col] == 0)]
             if not bad_no_fte.empty:
-                add_finding(32, f"🚩 Found {len(bad_no_fte)} salary lines with >$100 YTD but 0 FTE (see table below)")
+                add_finding(32, f"Found {len(bad_no_fte)} salary lines with >$100 YTD but 0 FTE (see table below)")
                 cols = {'Fund': 'Fund_Key'}
                 if 'Function_Key' in e_df.columns:
                     cols['Function'] = 'Function_Key'
@@ -799,7 +803,7 @@ def run_all_validations(cash_df, revenue_df, expenditure_df, entity_name, is_q1,
                 })
             
             if detail_rows_32:
-                add_finding(32, f"📋 Object 51100 by Job Class ({len(detail_rows_32)} classes, excl. substitutes)", is_pass=True)
+                add_finding(32, f"Object 51100 by Job Class ({len(detail_rows_32)} classes, excl. substitutes)", level="INFO")
                 add_table(32, pd.DataFrame(detail_rows_32),
                          f"Object 51100 Salary by Job Class ({len(detail_rows_32)} classes, excl. substitutes)")
 
@@ -816,7 +820,7 @@ def run_all_validations(cash_df, revenue_df, expenditure_df, entity_name, is_q1,
                 # Check for any FTE > 0 in substitute positions
                 bad_fte = substitute_rows[substitute_rows[fte_col] > 0]
                 if not bad_fte.empty:
-                    add_finding(33, f"🚩 Found {len(bad_fte)} substitute positions with FTE present (see table below)")
+                    add_finding(33, f"Found {len(bad_fte)} substitute positions with FTE present (see table below)")
                     cols = {'Fund': 'Fund_Key'}
                     if 'Function_Key' in e_df.columns:
                         cols['Function'] = 'Function_Key'
@@ -825,7 +829,7 @@ def run_all_validations(cash_df, revenue_df, expenditure_df, entity_name, is_q1,
                     cols['YTD Amount'] = ytd_col
                     build_detail_table(bad_fte, cols, 33, f"Substitute Positions with FTE ({len(bad_fte)} lines)")
                 else:
-                    add_finding(33, f"✅ Substitute positions (Job Classes 1610-1613, 1800) have no FTE as expected ({len(substitute_rows)} lines checked)", is_pass=True)
+                    add_finding(33, f"Substitute positions (Job Classes 1610-1613, 1800) have no FTE as expected ({len(substitute_rows)} lines checked)", is_pass=True)
             else:
                 add_finding(33, "No substitute positions (Job Classes 1610-1613, 1800) found in Object 51100", is_pass=True)
         
@@ -834,7 +838,7 @@ def run_all_validations(cash_df, revenue_df, expenditure_df, entity_name, is_q1,
             non_salary = e_df[e_df['Object_Key'].isin(['51200', '51300'])]
             bad_fte = non_salary[non_salary[fte_col] > 0]
             if not bad_fte.empty:
-                add_finding(34, f"🚩 Found {len(bad_fte)} lines with FTE in Objects 51200/51300 (see table below)")
+                add_finding(34, f"Found {len(bad_fte)} lines with FTE in Objects 51200/51300 (see table below)")
                 cols = {'Fund': 'Fund_Key', 'Object': 'Object_Key'}
                 if 'Function_Key' in e_df.columns:
                     cols['Function'] = 'Function_Key'
@@ -855,7 +859,7 @@ def run_all_validations(cash_df, revenue_df, expenditure_df, entity_name, is_q1,
             neg_subtotals = func_subtotals[func_subtotals['Subtotal_Balance'] < -0.01]
             
             if not neg_subtotals.empty:
-                add_finding(35, f"🚩 Found {len(neg_subtotals)} Fund/Function combination(s) with NEGATIVE subtotal balance (see table below)")
+                add_finding(35, f"Found {len(neg_subtotals)} Fund/Function combination(s) with NEGATIVE subtotal balance (see table below)")
                 table_rows = []
                 for _, row in neg_subtotals.iterrows():
                     table_rows.append({
@@ -865,7 +869,7 @@ def run_all_validations(cash_df, revenue_df, expenditure_df, entity_name, is_q1,
                     })
                 add_table(35, pd.DataFrame(table_rows), f"Negative Fund/Function Subtotal Balances ({len(neg_subtotals)} combinations)")
             else:
-                add_finding(35, "✅ All Fund/Function subtotals have positive or zero Available Balance", is_pass=True)
+                add_finding(35, "All Fund/Function subtotals have positive or zero Available Balance", is_pass=True)
         
         # --- STEP 36: Object 53330 in Function 1000/2100 (Should be $0) ---
         if 'Object_Key' in e_df.columns and 'Function_Key' in e_df.columns and ytd_col:
@@ -874,7 +878,7 @@ def run_all_validations(cash_df, revenue_df, expenditure_df, entity_name, is_q1,
                 total = bad_rows[ytd_col].sum()
                 budget = bad_rows[bud_col].sum() if bud_col else 0
                 if total > 0 or budget > 0:
-                    add_finding(36, f"🚩 Object 53330 in Function 1000/2100: YTD=${total:,.2f}, Budget=${budget:,.2f} (Should be $0)")
+                    add_finding(36, f"Object 53330 in Function 1000/2100: YTD=${total:,.2f}, Budget=${budget:,.2f} (Should be $0)")
                 else:
                     add_finding(36, "Object 53330 in Function 1000/2100 has $0 as expected", is_pass=True)
             else:
@@ -902,14 +906,14 @@ def run_all_validations(cash_df, revenue_df, expenditure_df, entity_name, is_q1,
                             budget_only.append(f"Object {obj}: Budget=${bud_total:,.2f} (no expenditures — OK)")
                 
                 if expend_flags:
-                    add_finding(37, f"🚩 Forbidden Objects with EXPENDITURES: {'; '.join(expend_flags)}")
+                    add_finding(37, f"Forbidden Objects with EXPENDITURES: {'; '.join(expend_flags)}")
                 else:
-                    add_finding(37, "✅ No expenditures in forbidden objects (58213-58218)", is_pass=True)
+                    add_finding(37, "No expenditures in forbidden objects (58213-58218)", is_pass=True)
                 
                 if budget_only:
-                    add_finding(37, f"ℹ️ Budgeted only (allowed): {'; '.join(budget_only)}", is_pass=True)
+                    add_finding(37, f"Budgeted only (allowed): {'; '.join(budget_only)}", level="INFO")
             else:
-                add_finding(37, "✅ No forbidden objects (58213-58218) found", is_pass=True)
+                add_finding(37, "No forbidden objects (58213-58218) found", is_pass=True)
         
         # --- STEP 38: Fund 11000 Function 4000 Expenditures ---
         if 'Function_Key' in e_df.columns and ytd_col:
@@ -918,7 +922,7 @@ def run_all_validations(cash_df, revenue_df, expenditure_df, entity_name, is_q1,
                 total = bad_rows[ytd_col].sum()
                 budget = bad_rows[bud_col].sum() if bud_col else 0
                 if total > 0:
-                    add_finding(38, f"🚩 Fund 11000 Function 4000 has expenditures: YTD=${total:,.2f}, Budget=${budget:,.2f}")
+                    add_finding(38, f"Fund 11000 Function 4000 has expenditures: YTD=${total:,.2f}, Budget=${budget:,.2f}")
                 else:
                     add_finding(38, f"Fund 11000 Function 4000: YTD=$0, Budget=${budget:,.2f}", is_pass=True)
             else:
@@ -930,11 +934,11 @@ def run_all_validations(cash_df, revenue_df, expenditure_df, entity_name, is_q1,
             if not fund_21100.empty:
                 total = fund_21100[ytd_col].sum()
                 if total > 0:
-                    add_finding(39, f"✅ Fund 21100 has expenditures: ${total:,.2f}", is_pass=True)
+                    add_finding(39, f"Fund 21100 has expenditures: ${total:,.2f}", is_pass=True)
                 else:
-                    add_finding(39, f"🚩 Fund 21100 has $0 YTD Expenditures (Expected activity)")
+                    add_finding(39, f"Fund 21100 has $0 YTD Expenditures (Expected activity)")
             else:
-                add_finding(39, "⚠️ Fund 21100 not present in Expenditure Report")
+                add_finding(39, "Fund 21100 not present in Expenditure Report", level="WARN")
         
         # --- STEP 40: Q1 Period vs YTD Check (Expenditure) ---
         if per_col and ytd_col:
@@ -945,14 +949,14 @@ def run_all_validations(cash_df, revenue_df, expenditure_df, entity_name, is_q1,
             
             if is_q1:
                 if abs(grand_total_period - grand_total_ytd) < 1.0:
-                    add_finding(40, "✅ Q1 Check PASSED: Period equals YTD", is_pass=True)
+                    add_finding(40, "Q1 Check PASSED: Period equals YTD", is_pass=True)
                 else:
-                    add_finding(40, f"🚩 Q1 Check: Period (${grand_total_period:,.2f}) != YTD (${grand_total_ytd:,.2f})")
+                    add_finding(40, f"Q1 Check: Period (${grand_total_period:,.2f}) != YTD (${grand_total_ytd:,.2f})")
             else:
                 if abs(grand_total_period - grand_total_ytd) < 1.0:
-                    add_finding(40, f"🚩 Q2-Q4 Flag: Period equals YTD (unexpected)")
+                    add_finding(40, f"Q2-Q4 Flag: Period equals YTD (unexpected)")
                 else:
-                    add_finding(40, "✅ Q2-Q4: Period and YTD are different (expected)", is_pass=True)
+                    add_finding(40, "Q2-Q4: Period and YTD are different (expected)", is_pass=True)
 
     # ==========================================
     # CASH REPORT CHECKS
@@ -967,19 +971,19 @@ def run_all_validations(cash_df, revenue_df, expenditure_df, entity_name, is_q1,
                 cash_grand_total_rev = c_df[c_df['Fund_Key'] != 'GRAND TOTAL'][col_l2].sum()
                 rev_report_grand_total = r_df[r_amt].sum()
                 
-                add_finding(48, f"📊 Revenue Reconciliation (Cash Line 2 vs Revenue Report YTD):", is_pass=True)
+                add_finding(48, f"Revenue Reconciliation (Cash Line 2 vs Revenue Report YTD):", level="INFO")
                 add_finding(48, f"  Cash Report Grand Total: ${cash_grand_total_rev:,.2f}", is_pass=True)
                 add_finding(48, f"  Revenue Report Grand Total: ${rev_report_grand_total:,.2f}", is_pass=True)
                 
                 diff = cash_grand_total_rev - rev_report_grand_total
                 if abs(diff) > 1.0:
-                    add_finding(48, f"🚩 GRAND TOTAL DIFFERENCE: ${diff:,.2f}")
+                    add_finding(48, f"GRAND TOTAL DIFFERENCE: ${diff:,.2f}")
                 else:
-                    add_finding(48, f"✅ Grand Totals Match (Difference: ${diff:,.2f})", is_pass=True)
+                    add_finding(48, f"Grand Totals Match (Difference: ${diff:,.2f})", is_pass=True)
                 
                 # Per-fund detailed breakdown
                 add_finding(48, f"", is_pass=True)
-                add_finding(48, f"📋 Per-Fund Comparison (Cash Line 2 vs Revenue Report YTD):", is_pass=True)
+                add_finding(48, f"Per-Fund Comparison (Cash Line 2 vs Revenue Report YTD):", level="INFO")
                 
                 matches = []
                 mismatches = []
@@ -1012,7 +1016,7 @@ def run_all_validations(cash_df, revenue_df, expenditure_df, entity_name, is_q1,
                 
                 # Show mismatches first (these need attention)
                 if mismatches:
-                    add_finding(48, f"🚩 Funds with DIFFERENCES ({len(mismatches)}) - Needs Review:")
+                    add_finding(48, f"Funds with DIFFERENCES ({len(mismatches)}) - Needs Review:")
                     for m in mismatches:
                         add_finding(48, f"  • Fund {m['fund']}:")
                         add_finding(48, f"      Cash Line 2: ${m['cash']:,.2f}")
@@ -1021,7 +1025,7 @@ def run_all_validations(cash_df, revenue_df, expenditure_df, entity_name, is_q1,
                 
                 # Show matching funds
                 if matches:
-                    add_finding(48, f"✅ Funds that MATCH ({len(matches)}):", is_pass=True)
+                    add_finding(48, f"Funds that MATCH ({len(matches)}):", is_pass=True)
                     for m in matches:
                         # Only show detail if there's actual activity
                         if m['cash'] != 0 or m['rev'] != 0:
@@ -1038,19 +1042,19 @@ def run_all_validations(cash_df, revenue_df, expenditure_df, entity_name, is_q1,
                 cash_grand_total_exp = c_df[c_df['Fund_Key'] != 'GRAND TOTAL'][col_l5].sum()  # Negative
                 exp_report_grand_total = e_df[e_amt].sum()  # Positive
                 
-                add_finding(49, f"📊 Expenditure Reconciliation (|Cash Line 5| vs Expenditure Report YTD):", is_pass=True)
+                add_finding(49, f"Expenditure Reconciliation (|Cash Line 5| vs Expenditure Report YTD):", level="INFO")
                 add_finding(49, f"  Cash Report |Line 5|: ${abs(cash_grand_total_exp):,.2f}", is_pass=True)
                 add_finding(49, f"  Expenditure Report Grand Total: ${exp_report_grand_total:,.2f}", is_pass=True)
                 
                 diff = abs(cash_grand_total_exp) - exp_report_grand_total
                 if abs(diff) > 1.0:
-                    add_finding(49, f"🚩 GRAND TOTAL DIFFERENCE: ${diff:,.2f}")
+                    add_finding(49, f"GRAND TOTAL DIFFERENCE: ${diff:,.2f}")
                 else:
-                    add_finding(49, f"✅ Grand Totals Match (Difference: ${diff:,.2f})", is_pass=True)
+                    add_finding(49, f"Grand Totals Match (Difference: ${diff:,.2f})", is_pass=True)
                 
                 # Per-fund detailed breakdown
                 add_finding(49, f"", is_pass=True)
-                add_finding(49, f"📋 Per-Fund Comparison (|Cash Line 5| vs Expenditure Report YTD):", is_pass=True)
+                add_finding(49, f"Per-Fund Comparison (|Cash Line 5| vs Expenditure Report YTD):", level="INFO")
                 
                 matches = []
                 mismatches = []
@@ -1083,7 +1087,7 @@ def run_all_validations(cash_df, revenue_df, expenditure_df, entity_name, is_q1,
                 
                 # Show mismatches first (these need attention)
                 if mismatches:
-                    add_finding(49, f"🚩 Funds with DIFFERENCES ({len(mismatches)}) - Needs Review:")
+                    add_finding(49, f"Funds with DIFFERENCES ({len(mismatches)}) - Needs Review:")
                     for m in mismatches:
                         add_finding(49, f"  • Fund {m['fund']}:")
                         add_finding(49, f"      |Cash Line 5|: ${m['cash']:,.2f}")
@@ -1092,7 +1096,7 @@ def run_all_validations(cash_df, revenue_df, expenditure_df, entity_name, is_q1,
                 
                 # Show matching funds
                 if matches:
-                    add_finding(49, f"✅ Funds that MATCH ({len(matches)}):", is_pass=True)
+                    add_finding(49, f"Funds that MATCH ({len(matches)}):", is_pass=True)
                     for m in matches:
                         # Only show detail if there's actual activity
                         if m['cash'] != 0 or m['exp'] != 0:
@@ -1108,7 +1112,7 @@ def run_all_validations(cash_df, revenue_df, expenditure_df, entity_name, is_q1,
                     continue
                 net = row[col_l2] + row[col_l5]  # Rev (pos) + Exp (neg)
                 if net < -0.01:
-                    add_finding(50, f"🚩 Fund {fund}: Expenditures exceed Revenue (Net: ${net:,.2f})")
+                    add_finding(50, f"Fund {fund}: Expenditures exceed Revenue (Net: ${net:,.2f})")
 
         # Step 51: Cash Transfers (Line 6)
         col_l6 = next((c for c in c_df.columns if 'Line 6' in c), None)
@@ -1118,7 +1122,7 @@ def run_all_validations(cash_df, revenue_df, expenditure_df, entity_name, is_q1,
                 if abs(row[col_l6]) > 0.01 and row['Fund_Key'] != 'GRAND TOTAL':
                     transfers.append(f"Fund {row['Fund_Key']}: ${row[col_l6]:,.2f}")
             if transfers:
-                add_finding(51, f"⚠️ Cash Transfers on Line 6: {'; '.join(transfers)} - Verify with OBMS/FTS")
+                add_finding(51, f"Cash Transfers on Line 6: {'; '.join(transfers)} - Verify with OBMS/FTS", level="WARN")
             else:
                 add_finding(51, "No cash transfers on Line 6", is_pass=True)
 
@@ -1133,7 +1137,7 @@ def run_all_validations(cash_df, revenue_df, expenditure_df, entity_name, is_q1,
                         'Cash Balance (Line 7)': f"${row[col_l7]:,.2f}"
                     })
             if neg_cash_rows:
-                add_finding(52, f"🚩 Negative Cash Balance (Line 7) in {len(neg_cash_rows)} fund(s) (see table below)")
+                add_finding(52, f"Negative Cash Balance (Line 7) in {len(neg_cash_rows)} fund(s) (see table below)")
                 add_table(52, pd.DataFrame(neg_cash_rows), f"Negative Cash Balances ({len(neg_cash_rows)} funds)")
             else:
                 add_finding(52, "No negative cash balances on Line 7", is_pass=True)
@@ -1169,26 +1173,26 @@ def run_all_validations(cash_df, revenue_df, expenditure_df, entity_name, is_q1,
                     add_finding(53, f"  • Fund {fund}: Payroll liability = ${liability_val:,.2f}", is_pass=True)
             
             if issues_found:
-                add_finding(53, "⚠️ Payroll Liability Concerns Found:")
+                add_finding(53, "Payroll Liability Concerns Found:", level="WARN")
                 for issue in issues_found:
-                    add_finding(53, f"  🚩 {issue}")
-                add_finding(53, "  ℹ️ Note: This is a self-reported cell. Use professional judgment to determine if these are true payroll liabilities or a plug to make the cash report balance. These amounts should generally be positive.")
+                    add_finding(53, f"  {issue}")
+                add_finding(53, "  Note: This is a self-reported cell. Use professional judgment to determine if these are true payroll liabilities or a plug to make the cash report balance. These amounts should generally be positive.", level="INFO")
             else:
                 # Check if there are ANY payroll liabilities at all
                 total_liabilities = c_df[c_df['Fund_Key'] != 'GRAND TOTAL'][col_l8].sum()
                 if abs(total_liabilities) < 0.01:
-                    add_finding(53, "ℹ️ No payroll liabilities reported across any fund. Verify this is expected.", is_pass=True)
+                    add_finding(53, "No payroll liabilities reported across any fund. Verify this is expected.", level="INFO")
                 else:
-                    add_finding(53, f"✅ All payroll liabilities are positive (Total: ${total_liabilities:,.2f})", is_pass=True)
+                    add_finding(53, f"All payroll liabilities are positive (Total: ${total_liabilities:,.2f})", is_pass=True)
         else:
-            add_finding(53, "⚠️ Could not find Line 8 (Payroll Liabilities) column in Cash Report. Available columns: " + ", ".join(c_df.columns.tolist()))
+            add_finding(53, "Could not find Line 8 (Payroll Liabilities) column in Cash Report. Available columns: " + ", ".join(c_df.columns.tolist()), level="WARN")
 
         # Step 54: Interfund Loans (Line 11)
         col_l11 = next((c for c in c_df.columns if 'Line 11' in c), None)
         if col_l11:
             total_loans = c_df[c_df['Fund_Key'] != 'GRAND TOTAL'][col_l11].sum()
             if abs(total_loans) > 0.01:
-                add_finding(54, f"🚩 Line 11 Grand Total != $0 (${total_loans:,.2f}) - Interfund loans must balance")
+                add_finding(54, f"Line 11 Grand Total != $0 (${total_loans:,.2f}) - Interfund loans must balance")
             else:
                 add_finding(54, "Interfund loans balance (Line 11 total = $0)", is_pass=True)
             
@@ -1199,9 +1203,9 @@ def run_all_validations(cash_df, revenue_df, expenditure_df, entity_name, is_q1,
                 if fund == 'GRAND TOTAL':
                     continue
                 if fund == '11000' and val > 0.01:
-                    add_finding(54, f"🚩 Fund 11000 has POSITIVE loan (${val:,.2f}) - Should be negative or zero")
+                    add_finding(54, f"Fund 11000 has POSITIVE loan (${val:,.2f}) - Should be negative or zero")
                 elif fund != '11000' and val < -0.01:
-                    add_finding(54, f"🚩 Fund {fund} has NEGATIVE loan (${val:,.2f}) - Should be positive or zero")
+                    add_finding(54, f"Fund {fund} has NEGATIVE loan (${val:,.2f}) - Should be positive or zero")
 
         # Step 55: Capital Fund Revenue (31100 and 31900)
         if r_df is not None:
@@ -1273,9 +1277,9 @@ def generate_analysis_summary(cash_df, revenue_df, expenditure_df, entity_name, 
     for step, findings in validation_results.items():
         for finding in findings:
             status, msg = finding
-            if status == "FLAG" and "🚩" in msg:
+            if status == "FLAG":
                 summary['concerns'].append(f"Step {step}: {msg}")
-            elif status == "PASS" and "✅" in msg:
+            elif status == "PASS":
                 summary['highlights'].append(f"Step {step}: {msg}")
     
     return summary
@@ -1687,7 +1691,7 @@ def generate_html_report(
     
     for step, findings in validation_results.items():
         for status, msg in findings:
-            if status == "FLAG" and "🚩" in msg:
+            if status == "FLAG":
                 # Categorize by keywords
                 msg_lower = msg.lower()
                 if any(k in msg_lower for k in ['material', 'exceed budget', 'negative cash', 'forbidden']):
@@ -1696,7 +1700,7 @@ def generate_html_report(
                     concerns_med.append({'step': step, 'message': msg})
                 else:
                     concerns_low.append({'step': step, 'message': msg})
-            elif status == "PASS" and "✅" in msg:
+            elif status == "PASS":
                 highlights.append({'step': step, 'message': msg})
     
     # ======================================================
@@ -1793,13 +1797,13 @@ def generate_html_report(
             return ""
         items_html = ""
         for c in concern_list[:8]:
-            msg = c['message'].replace('🚩', '').replace('⚠️', '').strip()
+            msg = c['message'].strip()
             items_html += f'<div class="concern-card {color_class}"><div class="concern-icon">{icon}</div><div class="concern-body"><span class="concern-step">Step {c["step"]}</span>{msg}</div></div>\n'
         return items_html
     
-    high_concerns_html = build_concern_card(concerns_high, 'High', '🚩', 'high')
-    med_concerns_html = build_concern_card(concerns_med, 'Medium', '⚠️', 'medium')
-    low_concerns_html = build_concern_card(concerns_low, 'Low', '📋', 'low')
+    high_concerns_html = build_concern_card(concerns_high, 'High', '&#9650;', 'high')
+    med_concerns_html = build_concern_card(concerns_med, 'Medium', '&#9679;', 'medium')
+    low_concerns_html = build_concern_card(concerns_low, 'Low', '&#9642;', 'low')
     
     # --- Funds Exceeding Revenue ---
     def build_fund_exceed_rows(fund_list, badge_class, badge_text):
@@ -1920,7 +1924,7 @@ def generate_html_report(
     # --- Compliance Highlights ---
     highlights_html = ""
     for h in highlights[:15]:
-        msg = h['message'].replace('✅', '').strip()
+        msg = h['message'].replace('', '').strip()
         highlights_html += f'<div class="compliance-item"><div class="check">✓</div><div>{msg}</div></div>\n'
     
     # --- Action Items Table ---
@@ -2511,7 +2515,7 @@ def export_findings_memo(checklist_data: List[Dict], entity_name: str, analysis_
             doc.add_heading(area_name, level=2)
             for item in items:
                 doc.add_heading(f"Step {item['step']}: {item['check']}", level=3)
-                status = "✓ Completed" if item['completed'] else "⚠ Incomplete"
+                status = "✓ Completed" if item['completed'] else "Incomplete"
                 p = doc.add_paragraph()
                 p.add_run(f"Status: {status}\n").bold = True
                 if item['user_notes']:
@@ -2577,7 +2581,7 @@ def render_findings_table(step_id: int, table_findings: Dict):
         title = tf.get('title', '')
         df = tf['data']
         if not df.empty:
-            st.caption(f"📋 {title}")
+            st.caption(f"{title}")
             st.dataframe(df, use_container_width=True, hide_index=True)
 
 @st.dialog("Welcome to Actuals Analysis & Compliance", width="large")
@@ -2608,7 +2612,7 @@ def render_welcome_modal():
             "The next steps will show you where to find each one."
         )
         st.info(
-            "💡 **Tip:** You can still use the app with just a Cash Report — "
+            "**Tip:** You can still use the app with just a Cash Report — "
             "revenue and expenditure checks will simply be skipped."
         )
         col_l, col_r = st.columns(2)
@@ -2621,19 +2625,19 @@ def render_welcome_modal():
     elif step == 2:
         st.markdown("### Where to Get Your Reports")
 
-        st.markdown("**① Cash Report** (Excel)")
+        st.markdown("**1. Cash Report** (Excel)")
         st.markdown(
             "Download from the district/charter's quarterly submission. "
             "The app reads the **Summary** tab automatically. "
             "Most analysts already have this file from the submission package."
         )
 
-        st.markdown("**② Revenue Report & ③ Expenditure Report** (CSV or Excel)")
+        st.markdown("**2. Revenue Report & 3. Expenditure Report** (CSV or Excel)")
         st.markdown(
             "Pull these from the **OBMS Financial Explorer**:"
         )
         st.markdown(
-            "👉 [Open OBMS Financial Explorer]"
+            "[Open OBMS Financial Explorer]"
             "(https://huggingface.co/spaces/bobthehermit/OBMS-Financial-Explorer)"
         )
         st.markdown(
@@ -2644,7 +2648,7 @@ def render_welcome_modal():
             "- Download the **Expenditure Actuals** report (CSV)\n"
         )
         st.warning(
-            "⚠️ Make sure your Revenue and Expenditure reports are for the "
+            "Make sure your Revenue and Expenditure reports are for the "
             "**same entity and period** as your Cash Report."
         )
 
@@ -2666,7 +2670,7 @@ def render_welcome_modal():
             "**1. Upload** your three reports in the sidebar.\n\n"
             "**2. Review** — The app runs automated checks and displays "
             "results inside each checklist step. Steps with issues show "
-            "🚩 flags; clean steps show ✅.\n\n"
+            "flagged findings; clean steps are marked as passed.\n\n"
             "**3. Add notes** — Use the notes field in each step to "
             "record your analyst comments, questions for the district, "
             "or follow-up items.\n\n"
@@ -2675,7 +2679,7 @@ def render_welcome_modal():
         )
 
         st.markdown("---")
-        st.markdown("**💾 Saving Your Progress**")
+        st.markdown("**Saving Your Progress**")
         st.markdown(
             "Your work isn't lost if you close the browser. Use "
             "**\"Save Your Progress\"** in the sidebar to download a session "
@@ -2690,7 +2694,7 @@ def render_welcome_modal():
                 st.session_state.welcome_step = 2
                 st.rerun()
         with col_r:
-            if st.button("Get Started ✓", type="primary", use_container_width=True, key="w_done"):
+            if st.button("Get Started", type="primary", use_container_width=True, key="w_done"):
                 st.session_state.welcome_dismissed = True
                 st.session_state.welcome_step = 1  # Reset for next time
                 st.rerun()
@@ -2710,11 +2714,11 @@ def main():
             div[data-testid="stVerticalBlock"] > div:has(div[data-testid="stProgress"]) {
                 position: sticky;
                 top: 2.875rem;
-                background-color: white;
+                background-color: #ffffff;
                 z-index: 999;
                 padding-top: 10px;
                 padding-bottom: 10px;
-                border-bottom: 1px solid #f0f2f6;
+                border-bottom: 1px solid #e5e2da;
             }
         </style>
         """,
@@ -2723,7 +2727,7 @@ def main():
 
     with st.sidebar:
         # Help button
-        if st.button("❓ How to Use This App", use_container_width=True):
+        if st.button("How to Use This App", use_container_width=True):
             st.session_state.welcome_dismissed = False
             st.rerun()
 
@@ -2736,13 +2740,13 @@ def main():
 
         st.header("2. Upload Reports")
 
-        st.markdown("**① Cash Report**")
+        st.markdown("**1. Cash Report**")
         st.caption("Excel file from the district's quarterly submission (Summary tab).")
         cash_file = st.file_uploader("Cash Report", type=['csv', 'xlsx', 'xls'],
                                      key='cash', label_visibility="collapsed")
         st.markdown("---")
 
-        st.markdown("**② Revenue Actuals Report**")
+        st.markdown("**2. Revenue Actuals Report**")
         st.caption(
             "CSV/Excel from "
             "[OBMS Financial Explorer](https://huggingface.co/spaces/bobthehermit/OBMS-Financial-Explorer) "
@@ -2752,7 +2756,7 @@ def main():
                                     key='rev', label_visibility="collapsed")
         st.markdown("---")
 
-        st.markdown("**③ Expenditure Actuals Report**")
+        st.markdown("**3. Expenditure Actuals Report**")
         st.caption(
             "CSV/Excel from "
             "[OBMS Financial Explorer](https://huggingface.co/spaces/bobthehermit/OBMS-Financial-Explorer) "
@@ -2806,7 +2810,7 @@ def main():
         entity_slug = (st.session_state.entity_name.replace(' ', '_')
                        if st.session_state.entity_name else "Review")
         st.download_button(
-            label="💾 Save Your Progress",
+            label="Save Your Progress",
             data=buffer,
             file_name=f"Review_{entity_slug}_{datetime.now().strftime('%Y%m%d')}.pkl",
             mime="application/octet-stream",
@@ -2837,7 +2841,7 @@ def main():
                     st.session_state['step_47_last_year'] = data.get('step_47_last_year', 0.0)
                     st.session_state['step_47_this_year'] = data.get('step_47_this_year', 0.0)
                     st.session_state.last_loaded_file = uploaded_session.name
-                    st.success("✅ Session restored! Your data and notes are loaded.")
+                    st.success("Session restored! Your data and notes are loaded.")
                     st.rerun()
                 except Exception as e:
                     st.error(f"Error loading session: {e}")
@@ -2880,7 +2884,7 @@ def main():
         st.caption(f"Progress: {done}/{total}")
         
         # --- ANALYSIS DASHBOARD ---
-        st.header("📊 Analysis Dashboard")
+        st.header("Analysis Dashboard")
         
         col1, col2, col3 = st.columns(3)
         with col1:
@@ -2895,13 +2899,13 @@ def main():
         
         # Quick Concerns Summary
         if analysis_summary.get('concerns'):
-            with st.expander(f"⚠️ Key Concerns ({len(analysis_summary['concerns'])})", expanded=True):
+            with st.expander(f"Key Concerns ({len(analysis_summary['concerns'])})", expanded=True):
                 for concern in analysis_summary['concerns'][:10]:
                     st.write(f"• {concern}")
 
         # Filters
         c1, c2 = st.columns([3, 1])
-        search = c1.text_input("🔍 Search", "")
+        search = c1.text_input("Search", "")
         show_incomplete = c2.checkbox("Incomplete Only")
 
         # Exports
@@ -2916,8 +2920,8 @@ def main():
         )
         tracker_bytes = export_checklist_tracker(st.session_state.checklist_data)
         
-        ec1.download_button("📄 Download Findings Memo (Word)", data=memo_bytes, file_name=f"Memo_{st.session_state.entity_name}.docx", mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document", use_container_width=True)
-        ec2.download_button("📊 Download Checklist (Excel)", data=tracker_bytes, file_name=f"Tracker_{st.session_state.entity_name}.xlsx", mime="application/vnd.openxmlformats-officedocument.ms-excel", use_container_width=True)
+        ec1.download_button("Download Findings Memo (Word)", data=memo_bytes, file_name=f"Memo_{st.session_state.entity_name}.docx", mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document", use_container_width=True)
+        ec2.download_button("Download Checklist (Excel)", data=tracker_bytes, file_name=f"Tracker_{st.session_state.entity_name}.xlsx", mime="application/vnd.openxmlformats-officedocument.ms-excel", use_container_width=True)
         # Generate HTML Report
         html_report = generate_html_report(
             entity_name=st.session_state.entity_name,
@@ -2933,7 +2937,7 @@ def main():
         html_bytes.seek(0)
 
         ec3.download_button(
-            "📊 Download Visual Report (HTML)",
+            "Download Visual Report (HTML)",
             data=html_bytes,
             file_name=f"Analysis_{st.session_state.entity_name}.html",
             mime="text/html",
@@ -2949,7 +2953,7 @@ def main():
         areas = list(dict.fromkeys(i['review_area'] for i in items))
 
         for area in areas:
-            st.subheader(f"📂 {area}")
+            st.subheader(f"{area}")
             area_items = [i for i in items if i['review_area'] == area]
             
             for item in area_items:
@@ -2958,7 +2962,7 @@ def main():
                     
                     # INJECT INPUTS
                     if step_id == 6:
-                        st.markdown(f"🔗 [Open June SEG File]({SEG_EXTERNAL_LINK})") 
+                        st.markdown(f"[Open June SEG File]({SEG_EXTERNAL_LINK})") 
                         c1, c2 = st.columns(2)
                         st.session_state['step_6_period'] = c1.number_input("SEG Actual Period", value=user_inputs['step_6_period'], key="s6_p")
                         st.session_state['step_6_ytd'] = c2.number_input("SEG Actual YTD", value=user_inputs['step_6_ytd'], key="s6_y")
@@ -2974,16 +2978,16 @@ def main():
                     # INJECT FINDINGS (Now with PASS/FLAG distinction)
                     findings = st.session_state.validation_results.get(step_id, [])
                     if findings:
-                        passes = [f for f in findings if f[0] == "PASS"]
-                        flags = [f for f in findings if f[0] == "FLAG"]
+                        passes = [f for f in findings if f[0] in ("PASS", "INFO")]
+                        flags = [f for f in findings if f[0] in ("FLAG", "WARN")]
                         
                         if flags:
-                            st.error("🤖 **Automated Findings (Issues):**")
+                            st.error("**Automated Findings — Issues**")
                             for _, msg in flags:
                                 st.write(f"• {msg}")
                         
                         if passes:
-                            st.success("🤖 **Automated Findings (Passed):**")
+                            st.success("**Automated Findings — Passed**")
                             for _, msg in passes:
                                 st.write(f"• {msg}")
                     
@@ -3041,7 +3045,7 @@ def main():
                     st.session_state.notes_by_step[step_id] = notes
                     st.session_state.checklist_data[idx]['user_notes'] = notes
     else:
-        st.markdown("### 👋 Ready to Begin")
+        st.markdown("### Ready to Begin")
         st.markdown(
             "Upload your **Cash Report** in the sidebar to start the review. "
             "For the full suite of automated checks, also upload the "
