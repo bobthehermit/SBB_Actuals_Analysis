@@ -148,6 +148,11 @@ def build_obms_actuals_report(act_df, bud_df, entity_name, account_type) -> pd.D
         & (act_df["Account Type"] == account_type)
     ].copy() if len(act_df) > 0 else act_df.copy()
 
+    # A budget frame missing its measure columns is treated as empty rather
+    # than crashing the whole build (defensive: malformed/renamed parquet).
+    if len(bud_df) > 0 and not {"Adjusted Amt", "Adjusted FTE"}.issubset(bud_df.columns):
+        bud_df = pd.DataFrame(columns=OBMS_BUDGET_COLS)
+
     bud = bud_df[
         (bud_df["Budget Entity"] == entity_name)
         & (bud_df["Account Type"] == account_type)
@@ -268,7 +273,7 @@ def render_sidebar_logo(logo_path: Optional[str] = None):
     if logo_path and os.path.exists(logo_path):
         try:
             img = Image.open(logo_path)
-            st.sidebar.image(img, use_container_width=True)
+            st.sidebar.image(img, width="stretch")
         except Exception:
             pass
 
@@ -320,7 +325,7 @@ def load_report_file(file, name: str) -> Optional[pd.DataFrame]:
         st.error(f"Error loading {name}: {e}")
         return None
 
-def load_cash_from_excel(file) -> Optional[pd.DataFrame]:
+def load_cash_from_excel(file, quiet: bool = False) -> Optional[pd.DataFrame]:
     """
     Load cash report from a raw Excel workbook by reading the 'Summary' tab.
     Handles the standard PED cash report format where:
@@ -361,8 +366,9 @@ def load_cash_from_excel(file) -> Optional[pd.DataFrame]:
         
         # Parse entity name from the Excel file name if possible
         # Format: ENTITYNAME-FYxx-Qx-Cash-Report_-xxx-xxx.xlsx
-        st.session_state['cash_file_name'] = file.name
-        st.caption(f"Cash report loaded from: **{file.name}** (Summary tab)")
+        if not quiet:
+            st.session_state['cash_file_name'] = file.name
+            st.caption(f"Cash report loaded from: **{file.name}** (Summary tab)")
         
         return df
         
@@ -2796,6 +2802,181 @@ def export_checklist_tracker(checklist_data: List[Dict]) -> BytesIO:
     buffer.seek(0)
     return buffer
 
+
+# ---------- BATCH PORTFOLIO SCAN ----------
+
+BATCH_GENERIC_WORDS = {'public', 'schools', 'school', 'academy', 'charter',
+                       'consolidated', 'municipal', 'independent', 'district',
+                       'community', 'learning', 'center', 'the'}
+
+
+def match_cash_file(entity_name: str, files):
+    """Match an uploaded cash report to an entity by distinctive filename
+    tokens (same heuristic as the single-review mismatch guard)."""
+    tokens = [t for t in re.findall(r"[A-Za-z]{4,}", entity_name)
+              if t.lower() not in BATCH_GENERIC_WORDS]
+    for f in files:
+        if any(t.lower() in f.name.lower() for t in tokens):
+            return f
+    return None
+
+
+def run_batch_scan(act_df, bud_df, entities, period, cash_files):
+    """Run the full validation suite for each portfolio entity and store
+    results in session state for the batch dashboard."""
+    is_q1 = period in ("Q1", "Q01")
+    empty_inputs = {k: 0.0 for k in (
+        'step_6_period', 'step_6_ytd', 'step_7_budget',
+        'step_47_last_year', 'step_47_this_year',
+        'enroll_projected', 'enroll_40day')}
+
+    act_p = act_df[act_df["Reporting Period"] == period]
+    rows = []
+    prog = st.progress(0.0, text="Scanning portfolio…")
+
+    for i, ent in enumerate(entities):
+        ent_act = act_p[act_p["Budget Entity"] == ent]
+        cash_file = match_cash_file(ent, cash_files)
+        cash_df = load_cash_from_excel(cash_file, quiet=True) if cash_file is not None else None
+
+        entry = {
+            "entity": ent, "period": period,
+            "cash_name": cash_file.name if cash_file is not None else "",
+            "cash_df": cash_df,
+        }
+
+        if ent_act.empty:
+            summary = generate_analysis_summary(cash_df, None, None, ent, is_q1, {})
+            entry.update({
+                "status": "No actuals submitted", "rows": 0,
+                "rev_df": None, "exp_df": None,
+                "results": {}, "tables": {}, "summary": summary,
+                "flags": 0, "warns": 0,
+                "rev_ytd": None, "exp_ytd": None,
+                "cash_total": summary.get('statistics', {}).get('total_cash'),
+            })
+        else:
+            exp_rpt = build_obms_actuals_report(ent_act, bud_df, ent, "E")
+            rev_rpt = build_obms_actuals_report(ent_act, bud_df, ent, "R")
+            results, tables = run_all_validations(
+                cash_df, rev_rpt, exp_rpt, ent, is_q1, empty_inputs)
+            summary = generate_analysis_summary(
+                cash_df, rev_rpt, exp_rpt, ent, is_q1, results)
+            flags = sum(1 for fs in results.values() for f in fs if f[0] == "FLAG")
+            warns = sum(1 for fs in results.values() for f in fs if f[0] == "WARN")
+            stats = summary.get('statistics', {})
+            entry.update({
+                "status": "Scanned", "rows": int(len(ent_act)),
+                "rev_df": rev_rpt, "exp_df": exp_rpt,
+                "results": results, "tables": tables, "summary": summary,
+                "flags": flags, "warns": warns,
+                "rev_ytd": stats.get('total_revenue'),
+                "exp_ytd": stats.get('total_expenditure'),
+                "cash_total": stats.get('total_cash'),
+            })
+
+        rows.append(entry)
+        prog.progress((i + 1) / len(entities), text=f"Scanned {ent}")
+
+    prog.empty()
+    # attention-first ordering: most flags on top, unsubmitted at the bottom
+    rows.sort(key=lambda r: (r["status"] != "Scanned", -r["flags"], r["entity"]))
+    st.session_state.batch_results = rows
+    st.session_state.batch_label = period
+
+
+def render_batch_dashboard():
+    st.header("Batch Portfolio Scan")
+    results = st.session_state.get('batch_results') or []
+
+    if not results:
+        st.markdown(
+            "Select a fiscal year, reporting period, and your portfolio "
+            "entities in the sidebar. Optionally add the cash reports you've "
+            "received — they're matched to entities by filename. Then click "
+            "**Run Batch Scan**."
+        )
+        st.info(
+            "Every entity gets the full automated check suite. The result is "
+            "one table: who's submitted, who's clean, and who needs attention "
+            "first. Open any entity in Single Entity Review to work the "
+            "checklist and export the memo."
+        )
+        return
+
+    period = st.session_state.get('batch_label', '')
+    scanned = [r for r in results if r["status"] == "Scanned"]
+    st.caption(
+        f"Reporting period {period} — {len(results)} entities, "
+        f"{len(scanned)} with actuals, "
+        f"{len(results) - len(scanned)} not yet submitted."
+    )
+
+    tbl = []
+    for r in results:
+        tbl.append({
+            "Entity": r["entity"],
+            "Status": r["status"],
+            "Actuals Rows": r["rows"],
+            "Revenue YTD": r["rev_ytd"],
+            "Expenditure YTD": r["exp_ytd"],
+            "Cash (Line 7)": r["cash_total"],
+            "Cash Report": r["cash_name"] or "—",
+            "Flags": r["flags"],
+            "Cautions": r["warns"],
+        })
+    df = pd.DataFrame(tbl)
+
+    show = df.copy()
+    for c in ["Revenue YTD", "Expenditure YTD", "Cash (Line 7)"]:
+        show[c] = show[c].apply(
+            lambda v: f"${v:,.2f}" if isinstance(v, (int, float)) and pd.notna(v) else "—")
+    st.dataframe(show, width="stretch", hide_index=True)
+
+    buf = BytesIO()
+    with pd.ExcelWriter(buf, engine='xlsxwriter') as writer:
+        df.to_excel(writer, sheet_name='Portfolio', index=False)
+    buf.seek(0)
+    st.download_button(
+        "Download Portfolio Summary (Excel)", data=buf,
+        file_name=f"Portfolio_Scan_{period}_{datetime.now().strftime('%Y%m%d')}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.ms-excel")
+
+    st.divider()
+    st.subheader("Entity Detail")
+    for idx, r in enumerate(results):
+        label = (f"{r['entity']} — {r['flags']} flags, {r['warns']} cautions"
+                 if r["status"] == "Scanned" else f"{r['entity']} — {r['status']}")
+        with st.expander(label, expanded=False):
+            if r["status"] != "Scanned":
+                st.warning(
+                    "No actuals rows in OBMS for this period — nothing to "
+                    "review yet. Check the entity's submission status.")
+            else:
+                concerns = (r["summary"] or {}).get('concerns', [])
+                if concerns:
+                    st.error("**Top concerns:**")
+                    for c in concerns[:8]:
+                        st.write(f"• {c}")
+                else:
+                    st.success("No flagged findings.")
+                if not r["cash_name"]:
+                    st.caption(
+                        "No cash report matched — cash reconciliation steps "
+                        "(48–54) were skipped for this entity.")
+                if st.button("Open in Single Entity Review",
+                             key=f"batch_open_{idx}", width="stretch"):
+                    st.session_state.revenue_df = r["rev_df"]
+                    st.session_state.expenditure_df = r["exp_df"]
+                    st.session_state.cash_df = r["cash_df"]
+                    st.session_state.entity_name = r["entity"]
+                    st.session_state.obms_pulled_period = r["period"]
+                    if r["cash_name"]:
+                        st.session_state['cash_file_name'] = r["cash_name"]
+                    st.session_state['_switch_to_single'] = True
+                    st.rerun()
+
+
 # ---------- SESSION STATE ----------
 
 if 'checklist_data' not in st.session_state:
@@ -2835,7 +3016,7 @@ def render_findings_table(step_id: int, table_findings: Dict):
         df = tf['data']
         if not df.empty:
             st.caption(f"{title}")
-            st.dataframe(df, use_container_width=True, hide_index=True)
+            st.dataframe(df, width="stretch", hide_index=True)
 
 @st.dialog("Welcome to Actuals Analysis & Compliance", width="large")
 def render_welcome_modal():
@@ -2870,7 +3051,7 @@ def render_welcome_modal():
         )
         col_l, col_r = st.columns(2)
         with col_r:
-            if st.button("Next →", use_container_width=True, key="w_next_1"):
+            if st.button("Next →", width="stretch", key="w_next_1"):
                 st.session_state.welcome_step = 2
                 st.rerun()
 
@@ -2907,11 +3088,11 @@ def render_welcome_modal():
 
         col_l, col_r = st.columns(2)
         with col_l:
-            if st.button("← Back", use_container_width=True, key="w_back_2"):
+            if st.button("← Back", width="stretch", key="w_back_2"):
                 st.session_state.welcome_step = 1
                 st.rerun()
         with col_r:
-            if st.button("Next →", use_container_width=True, key="w_next_2"):
+            if st.button("Next →", width="stretch", key="w_next_2"):
                 st.session_state.welcome_step = 3
                 st.rerun()
 
@@ -2943,11 +3124,11 @@ def render_welcome_modal():
 
         col_l, col_r = st.columns(2)
         with col_l:
-            if st.button("← Back", use_container_width=True, key="w_back_3"):
+            if st.button("← Back", width="stretch", key="w_back_3"):
                 st.session_state.welcome_step = 2
                 st.rerun()
         with col_r:
-            if st.button("Get Started", type="primary", use_container_width=True, key="w_done"):
+            if st.button("Get Started", type="primary", width="stretch", key="w_done"):
                 st.session_state.welcome_dismissed = True
                 st.session_state.welcome_step = 1  # Reset for next time
                 st.rerun()
@@ -2980,225 +3161,284 @@ def main():
 
     with st.sidebar:
         # Help button
-        if st.button("How to Use This App", use_container_width=True):
+        if st.button("How to Use This App", width="stretch"):
             st.session_state.welcome_dismissed = False
             st.rerun()
 
         st.divider()
 
-        st.header("1. Review Settings")
-        _pulled_q = st.session_state.get('obms_pulled_period')
-        is_q1 = st.radio(
-            "Review Period", ["Q1", "Q2-Q4"],
-            index=0 if _pulled_q == "Q1" else 1
-        ) == "Q1"
-        if _pulled_q:
-            st.caption(f"Auto-set from OBMS pull ({_pulled_q}).")
-
+        # Review mode: single entity (default) or batch portfolio scan
+        if st.session_state.pop('_switch_to_single', False):
+            st.session_state['review_mode_radio'] = "Single Entity"
+        review_mode = st.radio(
+            "Review Mode", ["Single Entity", "Batch Portfolio Scan"],
+            key="review_mode_radio",
+            help="Batch mode runs the full check suite across your whole "
+                 "portfolio and produces a summary table."
+        )
+        batch_mode = review_mode == "Batch Portfolio Scan"
         st.divider()
 
-        st.header("2. Load Reports")
+        if not batch_mode:
+            st.header("1. Review Settings")
+            _pulled_q = st.session_state.get('obms_pulled_period')
+            is_q1 = st.radio(
+                "Review Period", ["Q1", "Q2-Q4"],
+                index=0 if _pulled_q in ("Q1", "Q01") else 1
+            ) == "Q1"
+            if _pulled_q:
+                st.caption(f"Auto-set from OBMS pull ({_pulled_q}).")
 
-        st.markdown("**1. Cash Report**")
-        st.caption("Excel file from the district's quarterly submission (Summary tab).")
-        cash_file = st.file_uploader("Cash Report", type=['csv', 'xlsx', 'xls'],
-                                     key='cash', label_visibility="collapsed")
-        st.markdown("---")
+            st.divider()
 
-        st.markdown("**2. Revenue & Expenditure Reports**")
-        rev_exp_source = st.radio(
-            "Source",
-            ["Pull directly from OBMS", "Upload CSV/Excel files"],
-            index=0, key="rev_exp_source",
-            help="Direct pull reads the same Google Drive parquet registry "
-                 "as the OBMS Financial Explorer — no CSV round trip needed."
-        )
+            st.header("2. Load Reports")
 
-        rev_file = None
-        exp_file = None
+            st.markdown("**1. Cash Report**")
+            st.caption("Excel file from the district's quarterly submission (Summary tab).")
+            cash_file = st.file_uploader("Cash Report", type=['csv', 'xlsx', 'xls'],
+                                         key='cash', label_visibility="collapsed")
+            st.markdown("---")
 
-        if rev_exp_source == "Pull directly from OBMS":
+            st.markdown("**2. Revenue & Expenditure Reports**")
+            rev_exp_source = st.radio(
+                "Source",
+                ["Pull directly from OBMS", "Upload CSV/Excel files"],
+                index=0, key="rev_exp_source",
+                help="Direct pull reads the same Google Drive parquet registry "
+                     "as the OBMS Financial Explorer — no CSV round trip needed."
+            )
+
+            rev_file = None
+            exp_file = None
+
+            if rev_exp_source == "Pull directly from OBMS":
+                registry = load_obms_registry()
+                fy_codes = sorted({k.split("_")[1] for k in registry if k.startswith("actuals_")})
+                if not fy_codes:
+                    st.warning(
+                        "OBMS registry unavailable. Check the remote manifest URL, "
+                        "or place a copy of gdrive_manifest.json next to this app. "
+                        "You can still upload files instead."
+                    )
+                else:
+                    fy_labels = {c: f"FY{2000 + int(c[:2])}\u2013{c[2:]}" for c in fy_codes}
+                    fy_code = st.selectbox(
+                        "Fiscal Year", options=list(reversed(fy_codes)),
+                        format_func=lambda c: fy_labels[c], key="obms_fy"
+                    )
+                    obms_act = load_obms_parquet(f"actuals_{fy_code}", registry.get(f"actuals_{fy_code}", ""))
+                    obms_bud = load_obms_parquet(f"budget_{fy_code}", registry.get(f"budget_{fy_code}", ""))
+
+                    if obms_act.empty:
+                        st.warning("No actuals data available for that fiscal year yet.")
+                    else:
+                        periods = sorted(obms_act["Reporting Period"].dropna().unique().tolist())
+                        sel_period = st.selectbox(
+                            "Reporting Period", periods,
+                            index=len(periods) - 1, key="obms_period"
+                        )
+                        entities = sorted(obms_act["Budget Entity"].dropna().unique().tolist())
+                        sel_entity = st.selectbox("Entity", entities, key="obms_entity")
+
+                        # Submission visibility: actuals rows per period for this
+                        # entity, so unsubmitted quarters are obvious BEFORE pulling.
+                        ent_rows = obms_act[obms_act["Budget Entity"] == sel_entity]
+                        per_counts = ent_rows.groupby("Reporting Period").size().to_dict()
+                        st.caption(
+                            "Actuals rows in OBMS: " + " · ".join(
+                                f"{p}: {per_counts.get(p, 0):,}" +
+                                (" (none)" if per_counts.get(p, 0) == 0 else "")
+                                for p in periods
+                            )
+                        )
+
+                        if st.button("Pull Revenue & Expenditure", type="primary",
+                                     width="stretch"):
+                            act_p = obms_act[
+                                (obms_act["Reporting Period"] == sel_period)
+                                & (obms_act["Budget Entity"] == sel_entity)
+                            ]
+                            if act_p.empty:
+                                st.warning(
+                                    f"OBMS has no {sel_period} actuals for "
+                                    f"{sel_entity} — the entity hasn't submitted "
+                                    f"this period yet (or the data hasn't loaded "
+                                    f"to the cube). Nothing was pulled; running "
+                                    f"the checklist against empty actuals would "
+                                    f"only generate noise. Check the entity's "
+                                    f"submission status in OBMS, or pick a "
+                                    f"period with data above."
+                                )
+                            else:
+                                with st.spinner("Building reports…"):
+                                    st.session_state.expenditure_df = build_obms_actuals_report(
+                                        act_p, obms_bud, sel_entity, "E")
+                                    st.session_state.revenue_df = build_obms_actuals_report(
+                                        act_p, obms_bud, sel_entity, "R")
+                                st.session_state.entity_name = sel_entity
+                                st.session_state.obms_pulled_period = sel_period
+                                st.rerun()
+
+                        if st.session_state.get('obms_pulled_period'):
+                            st.caption(
+                                f"Loaded: {st.session_state.entity_name} — "
+                                f"{fy_labels.get(fy_code, fy_code)} "
+                                f"{st.session_state.obms_pulled_period}"
+                            )
+            else:
+                st.markdown("**Revenue Actuals Report**")
+                st.caption(
+                    "CSV/Excel from "
+                    "[OBMS Financial Explorer](https://huggingface.co/spaces/bobthehermit/OBMS-Financial-Explorer) "
+                    "→ Actuals tab → Revenue download."
+                )
+                rev_file = st.file_uploader("Revenue Report", type=['csv', 'xlsx'],
+                                            key='rev', label_visibility="collapsed")
+                st.markdown("---")
+
+                st.markdown("**Expenditure Actuals Report**")
+                st.caption(
+                    "CSV/Excel from "
+                    "[OBMS Financial Explorer](https://huggingface.co/spaces/bobthehermit/OBMS-Financial-Explorer) "
+                    "→ Actuals tab → Expenditure download."
+                )
+                exp_file = st.file_uploader("Expenditure Report", type=['csv', 'xlsx'],
+                                            key='exp', label_visibility="collapsed")
+
+            if cash_file:
+                st.session_state.cash_df = load_cash_from_excel(cash_file)
+            if rev_file:
+                st.session_state.revenue_df = load_report_file(rev_file, "Rev")
+            if exp_file:
+                st.session_state.expenditure_df = load_report_file(exp_file, "Exp")
+
+            st.divider()
+
+            if st.session_state.revenue_df is not None or st.session_state.expenditure_df is not None:
+                if not st.session_state.entity_name:
+                    st.session_state.entity_name = detect_entity_name(
+                        st.session_state.revenue_df, st.session_state.expenditure_df
+                    )
+            st.session_state.entity_name = st.text_input("Entity Name", value=st.session_state.entity_name)
+
+            st.divider()
+
+            st.header("3. Save / Resume Progress")
+            st.caption(
+                "Save your current review (uploaded data, checklist, and notes) "
+                "so you can close the browser and pick up later."
+            )
+
+            current_state = {
+                'checklist_data': st.session_state.checklist_data,
+                'notes_by_step': st.session_state.notes_by_step,
+                'cash_df': st.session_state.cash_df,
+                'revenue_df': st.session_state.revenue_df,
+                'expenditure_df': st.session_state.expenditure_df,
+                'entity_name': st.session_state.entity_name,
+                'step_6_period': st.session_state.get('step_6_period', 0.0),
+                'step_6_ytd': st.session_state.get('step_6_ytd', 0.0),
+                'step_7_budget': st.session_state.get('step_7_budget', 0.0),
+                'step_47_last_year': st.session_state.get('step_47_last_year', 0.0),
+                'step_47_this_year': st.session_state.get('step_47_this_year', 0.0),
+                'enroll_projected': st.session_state.get('enroll_projected', 0.0),
+                'enroll_40day': st.session_state.get('enroll_40day', 0.0),
+                'obms_pulled_period': st.session_state.get('obms_pulled_period'),
+            }
+
+            buffer = BytesIO()
+            pickle.dump(current_state, buffer)
+            buffer.seek(0)
+
+            entity_slug = (st.session_state.entity_name.replace(' ', '_')
+                           if st.session_state.entity_name else "Review")
+            st.download_button(
+                label="Save Your Progress",
+                data=buffer,
+                file_name=f"Review_{entity_slug}_{datetime.now().strftime('%Y%m%d')}.pkl",
+                mime="application/octet-stream",
+                width="stretch",
+                help="Downloads a file that stores your entire review session."
+            )
+
+            st.markdown("")
+            st.markdown("**Resume a Previous Review**")
+            st.caption("Upload a previously saved progress file to continue where you left off.")
+            uploaded_session = st.file_uploader("Resume session", type=["pkl"],
+                                               label_visibility="collapsed")
+
+            if uploaded_session is not None:
+                if ('last_loaded_file' not in st.session_state
+                        or st.session_state.last_loaded_file != uploaded_session.name):
+                    try:
+                        data = pickle.load(uploaded_session)
+                        st.session_state.checklist_data = data.get('checklist_data', [])
+                        st.session_state.notes_by_step = data.get('notes_by_step', {})
+                        st.session_state.cash_df = data.get('cash_df')
+                        st.session_state.revenue_df = data.get('revenue_df')
+                        st.session_state.expenditure_df = data.get('expenditure_df')
+                        st.session_state.entity_name = data.get('entity_name', "")
+                        st.session_state['step_6_period'] = data.get('step_6_period', 0.0)
+                        st.session_state['step_6_ytd'] = data.get('step_6_ytd', 0.0)
+                        st.session_state['step_7_budget'] = data.get('step_7_budget', 0.0)
+                        st.session_state['step_47_last_year'] = data.get('step_47_last_year', 0.0)
+                        st.session_state['step_47_this_year'] = data.get('step_47_this_year', 0.0)
+                        st.session_state['enroll_projected'] = data.get('enroll_projected', 0.0)
+                        st.session_state['enroll_40day'] = data.get('enroll_40day', 0.0)
+                        st.session_state['obms_pulled_period'] = data.get('obms_pulled_period')
+                        st.session_state.last_loaded_file = uploaded_session.name
+                        st.success("Session restored! Your data and notes are loaded.")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Error loading session: {e}")
+
+        else:
+            st.header("Batch Portfolio Scan")
             registry = load_obms_registry()
             fy_codes = sorted({k.split("_")[1] for k in registry if k.startswith("actuals_")})
             if not fy_codes:
                 st.warning(
-                    "OBMS registry unavailable. Check the remote manifest URL, "
-                    "or place a copy of gdrive_manifest.json next to this app. "
-                    "You can still upload files instead."
+                    "OBMS registry unavailable — batch mode needs the direct "
+                    "OBMS connection. Check the manifest."
                 )
             else:
                 fy_labels = {c: f"FY{2000 + int(c[:2])}\u2013{c[2:]}" for c in fy_codes}
-                fy_code = st.selectbox(
+                b_fy = st.selectbox(
                     "Fiscal Year", options=list(reversed(fy_codes)),
-                    format_func=lambda c: fy_labels[c], key="obms_fy"
-                )
-                obms_act = load_obms_parquet(f"actuals_{fy_code}", registry.get(f"actuals_{fy_code}", ""))
-                obms_bud = load_obms_parquet(f"budget_{fy_code}", registry.get(f"budget_{fy_code}", ""))
+                    format_func=lambda c: fy_labels[c], key="batch_fy")
+                b_act = load_obms_parquet(f"actuals_{b_fy}", registry.get(f"actuals_{b_fy}", ""))
+                b_bud = load_obms_parquet(f"budget_{b_fy}", registry.get(f"budget_{b_fy}", ""))
 
-                if obms_act.empty:
+                if b_act.empty:
                     st.warning("No actuals data available for that fiscal year yet.")
                 else:
-                    periods = sorted(obms_act["Reporting Period"].dropna().unique().tolist())
-                    sel_period = st.selectbox(
-                        "Reporting Period", periods,
-                        index=len(periods) - 1, key="obms_period"
-                    )
-                    entities = sorted(obms_act["Budget Entity"].dropna().unique().tolist())
-                    sel_entity = st.selectbox("Entity", entities, key="obms_entity")
-
-                    # Submission visibility: actuals rows per period for this
-                    # entity, so unsubmitted quarters are obvious BEFORE pulling.
-                    ent_rows = obms_act[obms_act["Budget Entity"] == sel_entity]
-                    per_counts = ent_rows.groupby("Reporting Period").size().to_dict()
-                    st.caption(
-                        "Actuals rows in OBMS: " + " · ".join(
-                            f"{p}: {per_counts.get(p, 0):,}" +
-                            (" (none)" if per_counts.get(p, 0) == 0 else "")
-                            for p in periods
-                        )
-                    )
-
-                    if st.button("Pull Revenue & Expenditure", type="primary",
-                                 use_container_width=True):
-                        act_p = obms_act[
-                            (obms_act["Reporting Period"] == sel_period)
-                            & (obms_act["Budget Entity"] == sel_entity)
-                        ]
-                        if act_p.empty:
-                            st.warning(
-                                f"OBMS has no {sel_period} actuals for "
-                                f"{sel_entity} — the entity hasn't submitted "
-                                f"this period yet (or the data hasn't loaded "
-                                f"to the cube). Nothing was pulled; running "
-                                f"the checklist against empty actuals would "
-                                f"only generate noise. Check the entity's "
-                                f"submission status in OBMS, or pick a "
-                                f"period with data above."
-                            )
-                        else:
-                            with st.spinner("Building reports…"):
-                                st.session_state.expenditure_df = build_obms_actuals_report(
-                                    act_p, obms_bud, sel_entity, "E")
-                                st.session_state.revenue_df = build_obms_actuals_report(
-                                    act_p, obms_bud, sel_entity, "R")
-                            st.session_state.entity_name = sel_entity
-                            st.session_state.obms_pulled_period = sel_period
-                            st.rerun()
-
-                    if st.session_state.get('obms_pulled_period'):
-                        st.caption(
-                            f"Loaded: {st.session_state.entity_name} — "
-                            f"{fy_labels.get(fy_code, fy_code)} "
-                            f"{st.session_state.obms_pulled_period}"
-                        )
-        else:
-            st.markdown("**Revenue Actuals Report**")
-            st.caption(
-                "CSV/Excel from "
-                "[OBMS Financial Explorer](https://huggingface.co/spaces/bobthehermit/OBMS-Financial-Explorer) "
-                "→ Actuals tab → Revenue download."
-            )
-            rev_file = st.file_uploader("Revenue Report", type=['csv', 'xlsx'],
-                                        key='rev', label_visibility="collapsed")
-            st.markdown("---")
-
-            st.markdown("**Expenditure Actuals Report**")
-            st.caption(
-                "CSV/Excel from "
-                "[OBMS Financial Explorer](https://huggingface.co/spaces/bobthehermit/OBMS-Financial-Explorer) "
-                "→ Actuals tab → Expenditure download."
-            )
-            exp_file = st.file_uploader("Expenditure Report", type=['csv', 'xlsx'],
-                                        key='exp', label_visibility="collapsed")
-
-        if cash_file:
-            st.session_state.cash_df = load_cash_from_excel(cash_file)
-        if rev_file:
-            st.session_state.revenue_df = load_report_file(rev_file, "Rev")
-        if exp_file:
-            st.session_state.expenditure_df = load_report_file(exp_file, "Exp")
-
-        st.divider()
-
-        if st.session_state.revenue_df is not None or st.session_state.expenditure_df is not None:
-            if not st.session_state.entity_name:
-                st.session_state.entity_name = detect_entity_name(
-                    st.session_state.revenue_df, st.session_state.expenditure_df
-                )
-        st.session_state.entity_name = st.text_input("Entity Name", value=st.session_state.entity_name)
-
-        st.divider()
-
-        st.header("3. Save / Resume Progress")
-        st.caption(
-            "Save your current review (uploaded data, checklist, and notes) "
-            "so you can close the browser and pick up later."
-        )
-
-        current_state = {
-            'checklist_data': st.session_state.checklist_data,
-            'notes_by_step': st.session_state.notes_by_step,
-            'cash_df': st.session_state.cash_df,
-            'revenue_df': st.session_state.revenue_df,
-            'expenditure_df': st.session_state.expenditure_df,
-            'entity_name': st.session_state.entity_name,
-            'step_6_period': st.session_state.get('step_6_period', 0.0),
-            'step_6_ytd': st.session_state.get('step_6_ytd', 0.0),
-            'step_7_budget': st.session_state.get('step_7_budget', 0.0),
-            'step_47_last_year': st.session_state.get('step_47_last_year', 0.0),
-            'step_47_this_year': st.session_state.get('step_47_this_year', 0.0),
-            'enroll_projected': st.session_state.get('enroll_projected', 0.0),
-            'enroll_40day': st.session_state.get('enroll_40day', 0.0),
-            'obms_pulled_period': st.session_state.get('obms_pulled_period'),
-        }
-
-        buffer = BytesIO()
-        pickle.dump(current_state, buffer)
-        buffer.seek(0)
-
-        entity_slug = (st.session_state.entity_name.replace(' ', '_')
-                       if st.session_state.entity_name else "Review")
-        st.download_button(
-            label="Save Your Progress",
-            data=buffer,
-            file_name=f"Review_{entity_slug}_{datetime.now().strftime('%Y%m%d')}.pkl",
-            mime="application/octet-stream",
-            use_container_width=True,
-            help="Downloads a file that stores your entire review session."
-        )
-
-        st.markdown("")
-        st.markdown("**Resume a Previous Review**")
-        st.caption("Upload a previously saved progress file to continue where you left off.")
-        uploaded_session = st.file_uploader("Resume session", type=["pkl"],
-                                           label_visibility="collapsed")
-
-        if uploaded_session is not None:
-            if ('last_loaded_file' not in st.session_state
-                    or st.session_state.last_loaded_file != uploaded_session.name):
-                try:
-                    data = pickle.load(uploaded_session)
-                    st.session_state.checklist_data = data.get('checklist_data', [])
-                    st.session_state.notes_by_step = data.get('notes_by_step', {})
-                    st.session_state.cash_df = data.get('cash_df')
-                    st.session_state.revenue_df = data.get('revenue_df')
-                    st.session_state.expenditure_df = data.get('expenditure_df')
-                    st.session_state.entity_name = data.get('entity_name', "")
-                    st.session_state['step_6_period'] = data.get('step_6_period', 0.0)
-                    st.session_state['step_6_ytd'] = data.get('step_6_ytd', 0.0)
-                    st.session_state['step_7_budget'] = data.get('step_7_budget', 0.0)
-                    st.session_state['step_47_last_year'] = data.get('step_47_last_year', 0.0)
-                    st.session_state['step_47_this_year'] = data.get('step_47_this_year', 0.0)
-                    st.session_state['enroll_projected'] = data.get('enroll_projected', 0.0)
-                    st.session_state['enroll_40day'] = data.get('enroll_40day', 0.0)
-                    st.session_state['obms_pulled_period'] = data.get('obms_pulled_period')
-                    st.session_state.last_loaded_file = uploaded_session.name
-                    st.success("Session restored! Your data and notes are loaded.")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Error loading session: {e}")
+                    b_periods = sorted(b_act["Reporting Period"].dropna().unique().tolist())
+                    b_period = st.selectbox(
+                        "Reporting Period", b_periods,
+                        index=len(b_periods) - 1, key="batch_period")
+                    all_entities = sorted(b_act["Budget Entity"].dropna().unique().tolist())
+                    b_entities = st.multiselect(
+                        "Portfolio Entities", all_entities, key="batch_entities",
+                        help="Your review portfolio — the selection sticks for this session.")
+                    b_cash_files = st.file_uploader(
+                        "Cash Reports (optional — upload several)",
+                        type=['csv', 'xlsx', 'xls'], accept_multiple_files=True,
+                        key="batch_cash",
+                        help="Matched to entities by filename. Entities without "
+                             "a cash report still get all revenue/expenditure checks.")
+                    if st.button("Run Batch Scan", type="primary",
+                                 width="stretch",
+                                 disabled=not b_entities):
+                        run_batch_scan(b_act, b_bud, b_entities, b_period,
+                                       b_cash_files or [])
+                        st.rerun()
 
     # --- MAIN CONTENT ---
+
+    if batch_mode:
+        render_batch_dashboard()
+        return
+
 
     # Wrong-file guard: catch mismatched uploads before any review work happens
     consistency_problems = check_report_consistency(
@@ -3336,8 +3576,8 @@ def main():
             "Reminder: approved actuals become public record on New Mexico's "
             "Sunshine Portal (OpenBooks) — confirm figures are final before approval."
         )
-        ec1.download_button("Download Findings Memo (Word)", data=memo_bytes, file_name=f"Memo_{st.session_state.entity_name}.docx", mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document", use_container_width=True)
-        ec2.download_button("Download Checklist (Excel)", data=tracker_bytes, file_name=f"Tracker_{st.session_state.entity_name}.xlsx", mime="application/vnd.openxmlformats-officedocument.ms-excel", use_container_width=True)
+        ec1.download_button("Download Findings Memo (Word)", data=memo_bytes, file_name=f"Memo_{st.session_state.entity_name}.docx", mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document", width="stretch")
+        ec2.download_button("Download Checklist (Excel)", data=tracker_bytes, file_name=f"Tracker_{st.session_state.entity_name}.xlsx", mime="application/vnd.openxmlformats-officedocument.ms-excel", width="stretch")
         # Generate HTML Report
         html_report = generate_html_report(
             entity_name=st.session_state.entity_name,
@@ -3357,7 +3597,7 @@ def main():
             data=html_bytes,
             file_name=f"Analysis_{st.session_state.entity_name}.html",
             mime="text/html",
-            use_container_width=True
+            width="stretch"
         )
         st.divider()
 
