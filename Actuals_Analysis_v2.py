@@ -7,14 +7,26 @@ import os
 import re
 import base64
 import pickle
+import urllib.request
 from io import BytesIO
 from pathlib import Path
 from typing import Optional, Dict, Tuple, List
 from datetime import datetime
 
 import json
+import numpy as np
 import pandas as pd
 import streamlit as st
+
+# pandas 3.0 backs string columns with pyarrow arrays by default; pyarrow
+# compute kernels on those arrays segfault inside Streamlit's script-runner
+# thread (reproduced with pandas 3.0.3 / pyarrow 25.0 / streamlit 1.59).
+# Forcing python-backed string storage avoids the crash entirely — pyarrow
+# is still used to read parquet files, just not to back in-memory strings.
+try:
+    pd.set_option("mode.string_storage", "python")
+except Exception:
+    pass  # option absent on old pandas — those versions aren't affected
 from PIL import Image
 from docx import Document
 from docx.shared import Inches, Pt, Cm, RGBColor
@@ -43,6 +55,173 @@ CHECKLIST_FILE = APP_DIR / "Actuals_Checklist.csv"
 SEG_EXTERNAL_LINK = "https://webed.ped.state.nm.us/sites/FileTransfer/SitePages/Home.aspx"
 OBMS_LINK = "https://obms.ped.state.nm.us/PED_OBMS/OBMSHome"
 DFA_DIST_LINK = "https://www.nmdfa.state.nm.us/local-government/budget-finance-bureau/financial-distributions/"
+
+# ==========================================
+# OBMS DIRECT PULL
+# Reads the same Google Drive parquet registry as the OBMS Financial
+# Explorer, so Revenue/Expenditure reports can be pulled directly instead
+# of downloading CSVs from the Explorer and re-uploading them here.
+# The manifest is fetched from the Explorer's GitHub repo first (single
+# source of truth — new fiscal years appear here automatically), with a
+# local gdrive_manifest.json copy as fallback.
+# ==========================================
+MANIFEST_REMOTE_URL = (
+    "https://raw.githubusercontent.com/bobthehermit/"
+    "OBMS_Data_Explorer/main/gdrive_manifest.json"
+)
+MANIFEST_LOCAL_PATH = APP_DIR / "gdrive_manifest.json"
+
+# Column contracts (mirrors the Explorer)
+OBMS_DIMS = ["Budget Entity", "Fund", "Function", "Object", "Program", "Location", "Job Class"]
+OBMS_ACTUALS_COLS = OBMS_DIMS + [
+    "Account Type", "Reporting Period",
+    "Actuals Period Amount", "Actuals YTDAmount", "Actuals Encumbrance", "Actuals FTE",
+]
+OBMS_BUDGET_COLS = OBMS_DIMS + [
+    "Account Type", "Adjusted Amt", "Adjusted FTE",
+]
+OBMS_REPORT_COLS = [
+    "Entity", "Fund", "Function", "Object", "Program", "Location", "JobClass",
+    "Actuals Period Amount", "Actuals YTD", "Encumbrance", "Actuals FTE",
+    "Adjusted Budget", "Adjusted FTE", "Available Balance", "Burn % (Actuals + Enc)"
+]
+
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def load_obms_registry() -> dict:
+    """Fiscal-year → Google Drive file ID registry. Remote manifest first,
+    local copy second, empty dict (feature disabled) last."""
+    try:
+        req = urllib.request.Request(
+            MANIFEST_REMOTE_URL, headers={"User-Agent": "Mozilla/5.0 (SBB-Actuals)"}
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        if isinstance(data, dict) and data:
+            return data
+    except Exception:
+        pass
+    try:
+        if MANIFEST_LOCAL_PATH.exists():
+            with open(MANIFEST_LOCAL_PATH) as f:
+                data = json.load(f)
+            if isinstance(data, dict) and data:
+                return data
+    except Exception:
+        pass
+    return {}
+
+
+@st.cache_data(ttl=3600, max_entries=4, show_spinner="Loading OBMS data from Google Drive…")
+def load_obms_parquet(file_key: str, file_id: str) -> pd.DataFrame:
+    """Download one parquet from Google Drive, materializing only the
+    columns this app needs (same pruned-read approach as the Explorer).
+    file_id is part of the cache key so manifest updates bust stale entries."""
+    if not file_id:
+        return pd.DataFrame()
+    try:
+        req = urllib.request.Request(
+            f"https://drive.google.com/uc?export=download&id={file_id}",
+            headers={"User-Agent": "Mozilla/5.0 (SBB-Actuals)"},
+        )
+        with urllib.request.urlopen(req, timeout=180) as resp:
+            buf = BytesIO(resp.read())
+
+        import pyarrow.parquet as pq
+        available = set(pq.ParquetFile(buf).schema_arrow.names)
+        wanted = OBMS_ACTUALS_COLS if file_key.startswith("actuals") else OBMS_BUDGET_COLS
+        cols = [c for c in wanted if c in available] or None
+
+        buf.seek(0)
+        return pd.read_parquet(buf, columns=cols)
+    except Exception as e:
+        st.warning(f"Failed to load {file_key}: {e}")
+        return pd.DataFrame()
+
+
+def build_obms_actuals_report(act_df, bud_df, entity_name, account_type) -> pd.DataFrame:
+    """Port of the Explorer's build_actuals_report (raw numeric mode) —
+    produces the exact column layout this app's validations expect.
+    act_df should already be filtered to the selected Reporting Period."""
+    act = act_df[
+        (act_df["Budget Entity"] == entity_name)
+        & (act_df["Account Type"] == account_type)
+    ].copy() if len(act_df) > 0 else act_df.copy()
+
+    bud = bud_df[
+        (bud_df["Budget Entity"] == entity_name)
+        & (bud_df["Account Type"] == account_type)
+    ].copy() if len(bud_df) > 0 else bud_df.copy()
+
+    if len(act) == 0 and len(bud) == 0:
+        return pd.DataFrame(columns=OBMS_REPORT_COLS)
+
+    if len(act) > 0:
+        a_agg = act.groupby(OBMS_DIMS, dropna=False, observed=True).agg(
+            period_amt=("Actuals Period Amount", "sum"),
+            ytd_amt=("Actuals YTDAmount", "sum"),
+            enc_amt=("Actuals Encumbrance", "sum"),
+            act_fte=("Actuals FTE", "sum"),
+        ).reset_index()
+    else:
+        a_agg = pd.DataFrame(columns=OBMS_DIMS + ["period_amt", "ytd_amt", "enc_amt", "act_fte"])
+
+    if len(bud) > 0:
+        b_agg = bud.groupby(OBMS_DIMS, dropna=False, observed=True).agg(
+            adj_budget=("Adjusted Amt", "sum"),
+            adj_fte=("Adjusted FTE", "sum"),
+        ).reset_index()
+    else:
+        b_agg = pd.DataFrame(columns=OBMS_DIMS + ["adj_budget", "adj_fte"])
+
+    merged = b_agg.merge(a_agg, on=OBMS_DIMS, how="outer")
+
+    # Empty-side merges carry object-dtype measure columns; force numeric so
+    # the arithmetic below behaves identically on the empty-side path.
+    for c in ["period_amt", "ytd_amt", "enc_amt", "act_fte", "adj_budget", "adj_fte"]:
+        merged[c] = pd.to_numeric(merged[c], errors="coerce")
+
+    merged["avail_balance"] = (
+        merged["adj_budget"].fillna(0)
+        - merged["ytd_amt"].fillna(0)
+        - merged["enc_amt"].fillna(0)
+    )
+
+    has_budget = merged["adj_budget"].notna() & (merged["adj_budget"] != 0)
+    has_actuals = merged["ytd_amt"].notna() | merged["enc_amt"].notna()
+    merged["burn_pct"] = np.nan
+    mask = has_actuals & has_budget
+    if mask.any():
+        merged.loc[mask, "burn_pct"] = (
+            (merged.loc[mask, "ytd_amt"].fillna(0) + merged.loc[mask, "enc_amt"].fillna(0))
+            / merged.loc[mask, "adj_budget"] * 100
+        )
+
+    merged = merged.sort_values(OBMS_DIMS).reset_index(drop=True)
+
+    report = pd.DataFrame()
+    report["Entity"] = merged["Budget Entity"]
+    report["Fund"] = merged["Fund"]
+    report["Function"] = merged["Function"]
+    report["Object"] = merged["Object"]
+    report["Program"] = merged["Program"]
+    report["Location"] = merged["Location"]
+    report["JobClass"] = merged["Job Class"]
+    report["Actuals Period Amount"] = merged["period_amt"]
+    report["Actuals YTD"] = merged["ytd_amt"]
+    report["Encumbrance"] = merged["enc_amt"]
+    report["Actuals FTE"] = merged["act_fte"]
+    report["Adjusted Budget"] = merged["adj_budget"]
+    report["Adjusted FTE"] = merged["adj_fte"]
+    report["Available Balance"] = merged["avail_balance"]
+    report["Burn % (Actuals + Enc)"] = merged["burn_pct"]
+
+    act_side = ["Actuals Period Amount", "Actuals YTD", "Encumbrance", "Actuals FTE"]
+    bud_side = ["Adjusted Budget", "Adjusted FTE"]
+    report.loc[~has_actuals, act_side] = np.nan
+    report.loc[~has_budget, bud_side] = np.nan
+
+    return report
 
 # ---------- THEME / HEADER ----------
 LOGO_LEFT_PATH  = str(LOGO_FILE)
@@ -182,9 +361,8 @@ def load_cash_from_excel(file) -> Optional[pd.DataFrame]:
         
         # Parse entity name from the Excel file name if possible
         # Format: ENTITYNAME-FYxx-Qx-Cash-Report_-xxx-xxx.xlsx
-        entity_hint = file.name.split('-')[0] if '-' in file.name else ""
-        if entity_hint:
-            st.caption(f"Cash report loaded from: **{file.name}** (Summary tab)")
+        st.session_state['cash_file_name'] = file.name
+        st.caption(f"Cash report loaded from: **{file.name}** (Summary tab)")
         
         return df
         
@@ -199,6 +377,46 @@ def detect_entity_name(rev_df, exp_df) -> str:
     if exp_df is not None and 'Entity' in exp_df.columns:
         possible.update(exp_df['Entity'].dropna().unique())
     return list(possible)[0] if len(possible) == 1 else ""
+
+def check_report_consistency(rev_df, exp_df) -> List[str]:
+    """Wrong-file guard: verify the Revenue and Expenditure reports describe
+    the same entity and (when the column exists) the same fiscal year.
+    Returns a list of human-readable problems; empty list means consistent."""
+    problems = []
+
+    def _uniques(df, col_names):
+        if df is None:
+            return None
+        col = next((c for c in df.columns if c.strip().lower() in col_names), None)
+        if col is None:
+            return None
+        vals = sorted({str(v).strip() for v in df[col].dropna().unique() if str(v).strip()})
+        return vals
+
+    rev_entities = _uniques(rev_df, {'entity', 'entity name', 'district'})
+    exp_entities = _uniques(exp_df, {'entity', 'entity name', 'district'})
+
+    if rev_entities and len(rev_entities) > 1:
+        problems.append(f"Revenue Report contains multiple entities: {', '.join(rev_entities)}")
+    if exp_entities and len(exp_entities) > 1:
+        problems.append(f"Expenditure Report contains multiple entities: {', '.join(exp_entities)}")
+    if rev_entities and exp_entities and len(rev_entities) == 1 and len(exp_entities) == 1:
+        if rev_entities[0] != exp_entities[0]:
+            problems.append(
+                f"Entity mismatch: Revenue Report is for '{rev_entities[0]}' but "
+                f"Expenditure Report is for '{exp_entities[0]}'"
+            )
+
+    year_cols = {'fiscal year', 'fy', 'year', 'fiscalyear'}
+    rev_years = _uniques(rev_df, year_cols)
+    exp_years = _uniques(exp_df, year_cols)
+    if rev_years and exp_years and rev_years != exp_years:
+        problems.append(
+            f"Fiscal year mismatch: Revenue Report shows {', '.join(rev_years)} but "
+            f"Expenditure Report shows {', '.join(exp_years)}"
+        )
+
+    return problems
 
 # ---------- AUTOMATED VALIDATION LOGIC ----------
 
@@ -1225,6 +1443,30 @@ def run_all_validations(cash_df, revenue_df, expenditure_df, entity_name, is_q1,
     ty = user_inputs.get('step_47_this_year', 0.0)
     if ly != 0 and ty != 0 and abs(ly - ty) > 0.01:
         add_finding(47, f"Cash Balance Difference: Last Year ${ly:,.2f} vs This Year ${ty:,.2f}")
+
+    # Step 56: Enrollment Projection Outlook (growth projection vs 40-day count)
+    proj = user_inputs.get('enroll_projected', 0.0)
+    actual = user_inputs.get('enroll_40day', 0.0)
+    if proj > 0 and actual > 0:
+        diff = actual - proj
+        pct = (diff / proj) * 100
+        if diff < 0:
+            add_finding(56,
+                f"40-Day count ({actual:,.1f} MEM) is BELOW projection ({proj:,.1f} MEM) "
+                f"by {abs(diff):,.1f} ({pct:.1f}%)")
+            add_finding(56,
+                "Unmet enrollment projections trigger a mid-year SEG adjustment. "
+                "Review the entity's cash position and budgeted SEG against the shortfall — "
+                "a downward adjustment mid-year can create a cash flow crunch.",
+                level="WARN")
+            if pct < -2.0:
+                add_finding(56,
+                    f"Shortfall exceeds 2% — recommend contacting the entity about its "
+                    f"plan for absorbing the SEG reduction.", level="WARN")
+        else:
+            add_finding(56,
+                f"40-Day count ({actual:,.1f} MEM) meets or exceeds projection "
+                f"({proj:,.1f} MEM) by {diff:,.1f} ({pct:+.1f}%)", is_pass=True)
 
     return results, table_findings
 
@@ -2523,6 +2765,17 @@ def export_findings_memo(checklist_data: List[Dict], entity_name: str, analysis_
                     doc.add_paragraph(item['user_notes'], style='List Bullet')
                 doc.add_paragraph()
 
+    # Standard public-record notice
+    doc.add_paragraph()
+    notice = doc.add_paragraph()
+    run = notice.add_run(
+        "Reminder: Once approved, quarterly actuals reports become public record "
+        "and are published on New Mexico's Sunshine Portal (OpenBooks). Please "
+        "ensure all figures are final and accurate prior to approval."
+    )
+    run.italic = True
+    run.font.size = Pt(9)
+
     buffer = BytesIO()
     doc.save(buffer)
     buffer.seek(0)
@@ -2632,24 +2885,24 @@ def render_welcome_modal():
             "Most analysts already have this file from the submission package."
         )
 
-        st.markdown("**2. Revenue Report & 3. Expenditure Report** (CSV or Excel)")
+        st.markdown("**2. Revenue & 3. Expenditure Reports** (pulled automatically)")
         st.markdown(
-            "Pull these from the **OBMS Financial Explorer**:"
+            "These now come **straight from OBMS data** — in the sidebar, "
+            "choose **Pull directly from OBMS**, select the fiscal year, "
+            "reporting period, and entity, and click "
+            "**Pull Revenue & Expenditure**. No downloads needed."
         )
         st.markdown(
-            "[Open OBMS Financial Explorer]"
-            "(https://huggingface.co/spaces/bobthehermit/OBMS-Financial-Explorer)"
-        )
-        st.markdown(
-            "In the Explorer app:\n"
-            "- Go to the **Actuals** tab\n"
-            "- Select the entity and fiscal year\n"
-            "- Download the **Revenue Actuals** report (CSV)\n"
-            "- Download the **Expenditure Actuals** report (CSV)\n"
+            "Prefer files? Switch the source to **Upload CSV/Excel files** "
+            "and use exports from the "
+            "[OBMS Financial Explorer]"
+            "(https://huggingface.co/spaces/bobthehermit/OBMS-Financial-Explorer) "
+            "Actuals tab, as before."
         )
         st.warning(
-            "Make sure your Revenue and Expenditure reports are for the "
-            "**same entity and period** as your Cash Report."
+            "Either way, make sure the Revenue and Expenditure data are for the "
+            "**same entity and period** as your Cash Report. The app runs a "
+            "consistency check on every load and will flag mismatches."
         )
 
         col_l, col_r = st.columns(2)
@@ -2734,11 +2987,17 @@ def main():
         st.divider()
 
         st.header("1. Review Settings")
-        is_q1 = st.radio("Review Period", ["Q1", "Q2-Q4"], index=1) == "Q1"
+        _pulled_q = st.session_state.get('obms_pulled_period')
+        is_q1 = st.radio(
+            "Review Period", ["Q1", "Q2-Q4"],
+            index=0 if _pulled_q == "Q1" else 1
+        ) == "Q1"
+        if _pulled_q:
+            st.caption(f"Auto-set from OBMS pull ({_pulled_q}).")
 
         st.divider()
 
-        st.header("2. Upload Reports")
+        st.header("2. Load Reports")
 
         st.markdown("**1. Cash Report**")
         st.caption("Excel file from the district's quarterly submission (Summary tab).")
@@ -2746,24 +3005,111 @@ def main():
                                      key='cash', label_visibility="collapsed")
         st.markdown("---")
 
-        st.markdown("**2. Revenue Actuals Report**")
-        st.caption(
-            "CSV/Excel from "
-            "[OBMS Financial Explorer](https://huggingface.co/spaces/bobthehermit/OBMS-Financial-Explorer) "
-            "→ Actuals tab → Revenue download."
+        st.markdown("**2. Revenue & Expenditure Reports**")
+        rev_exp_source = st.radio(
+            "Source",
+            ["Pull directly from OBMS", "Upload CSV/Excel files"],
+            index=0, key="rev_exp_source",
+            help="Direct pull reads the same Google Drive parquet registry "
+                 "as the OBMS Financial Explorer — no CSV round trip needed."
         )
-        rev_file = st.file_uploader("Revenue Report", type=['csv', 'xlsx'],
-                                    key='rev', label_visibility="collapsed")
-        st.markdown("---")
 
-        st.markdown("**3. Expenditure Actuals Report**")
-        st.caption(
-            "CSV/Excel from "
-            "[OBMS Financial Explorer](https://huggingface.co/spaces/bobthehermit/OBMS-Financial-Explorer) "
-            "→ Actuals tab → Expenditure download."
-        )
-        exp_file = st.file_uploader("Expenditure Report", type=['csv', 'xlsx'],
-                                    key='exp', label_visibility="collapsed")
+        rev_file = None
+        exp_file = None
+
+        if rev_exp_source == "Pull directly from OBMS":
+            registry = load_obms_registry()
+            fy_codes = sorted({k.split("_")[1] for k in registry if k.startswith("actuals_")})
+            if not fy_codes:
+                st.warning(
+                    "OBMS registry unavailable. Check the remote manifest URL, "
+                    "or place a copy of gdrive_manifest.json next to this app. "
+                    "You can still upload files instead."
+                )
+            else:
+                fy_labels = {c: f"FY{2000 + int(c[:2])}\u2013{c[2:]}" for c in fy_codes}
+                fy_code = st.selectbox(
+                    "Fiscal Year", options=list(reversed(fy_codes)),
+                    format_func=lambda c: fy_labels[c], key="obms_fy"
+                )
+                obms_act = load_obms_parquet(f"actuals_{fy_code}", registry.get(f"actuals_{fy_code}", ""))
+                obms_bud = load_obms_parquet(f"budget_{fy_code}", registry.get(f"budget_{fy_code}", ""))
+
+                if obms_act.empty:
+                    st.warning("No actuals data available for that fiscal year yet.")
+                else:
+                    periods = sorted(obms_act["Reporting Period"].dropna().unique().tolist())
+                    sel_period = st.selectbox(
+                        "Reporting Period", periods,
+                        index=len(periods) - 1, key="obms_period"
+                    )
+                    entities = sorted(obms_act["Budget Entity"].dropna().unique().tolist())
+                    sel_entity = st.selectbox("Entity", entities, key="obms_entity")
+
+                    # Submission visibility: actuals rows per period for this
+                    # entity, so unsubmitted quarters are obvious BEFORE pulling.
+                    ent_rows = obms_act[obms_act["Budget Entity"] == sel_entity]
+                    per_counts = ent_rows.groupby("Reporting Period").size().to_dict()
+                    st.caption(
+                        "Actuals rows in OBMS: " + " · ".join(
+                            f"{p}: {per_counts.get(p, 0):,}" +
+                            (" (none)" if per_counts.get(p, 0) == 0 else "")
+                            for p in periods
+                        )
+                    )
+
+                    if st.button("Pull Revenue & Expenditure", type="primary",
+                                 use_container_width=True):
+                        act_p = obms_act[
+                            (obms_act["Reporting Period"] == sel_period)
+                            & (obms_act["Budget Entity"] == sel_entity)
+                        ]
+                        if act_p.empty:
+                            st.warning(
+                                f"OBMS has no {sel_period} actuals for "
+                                f"{sel_entity} — the entity hasn't submitted "
+                                f"this period yet (or the data hasn't loaded "
+                                f"to the cube). Nothing was pulled; running "
+                                f"the checklist against empty actuals would "
+                                f"only generate noise. Check the entity's "
+                                f"submission status in OBMS, or pick a "
+                                f"period with data above."
+                            )
+                        else:
+                            with st.spinner("Building reports…"):
+                                st.session_state.expenditure_df = build_obms_actuals_report(
+                                    act_p, obms_bud, sel_entity, "E")
+                                st.session_state.revenue_df = build_obms_actuals_report(
+                                    act_p, obms_bud, sel_entity, "R")
+                            st.session_state.entity_name = sel_entity
+                            st.session_state.obms_pulled_period = sel_period
+                            st.rerun()
+
+                    if st.session_state.get('obms_pulled_period'):
+                        st.caption(
+                            f"Loaded: {st.session_state.entity_name} — "
+                            f"{fy_labels.get(fy_code, fy_code)} "
+                            f"{st.session_state.obms_pulled_period}"
+                        )
+        else:
+            st.markdown("**Revenue Actuals Report**")
+            st.caption(
+                "CSV/Excel from "
+                "[OBMS Financial Explorer](https://huggingface.co/spaces/bobthehermit/OBMS-Financial-Explorer) "
+                "→ Actuals tab → Revenue download."
+            )
+            rev_file = st.file_uploader("Revenue Report", type=['csv', 'xlsx'],
+                                        key='rev', label_visibility="collapsed")
+            st.markdown("---")
+
+            st.markdown("**Expenditure Actuals Report**")
+            st.caption(
+                "CSV/Excel from "
+                "[OBMS Financial Explorer](https://huggingface.co/spaces/bobthehermit/OBMS-Financial-Explorer) "
+                "→ Actuals tab → Expenditure download."
+            )
+            exp_file = st.file_uploader("Expenditure Report", type=['csv', 'xlsx'],
+                                        key='exp', label_visibility="collapsed")
 
         if cash_file:
             st.session_state.cash_df = load_cash_from_excel(cash_file)
@@ -2801,6 +3147,9 @@ def main():
             'step_7_budget': st.session_state.get('step_7_budget', 0.0),
             'step_47_last_year': st.session_state.get('step_47_last_year', 0.0),
             'step_47_this_year': st.session_state.get('step_47_this_year', 0.0),
+            'enroll_projected': st.session_state.get('enroll_projected', 0.0),
+            'enroll_40day': st.session_state.get('enroll_40day', 0.0),
+            'obms_pulled_period': st.session_state.get('obms_pulled_period'),
         }
 
         buffer = BytesIO()
@@ -2840,6 +3189,9 @@ def main():
                     st.session_state['step_7_budget'] = data.get('step_7_budget', 0.0)
                     st.session_state['step_47_last_year'] = data.get('step_47_last_year', 0.0)
                     st.session_state['step_47_this_year'] = data.get('step_47_this_year', 0.0)
+                    st.session_state['enroll_projected'] = data.get('enroll_projected', 0.0)
+                    st.session_state['enroll_40day'] = data.get('enroll_40day', 0.0)
+                    st.session_state['obms_pulled_period'] = data.get('obms_pulled_period')
                     st.session_state.last_loaded_file = uploaded_session.name
                     st.success("Session restored! Your data and notes are loaded.")
                     st.rerun()
@@ -2847,6 +3199,37 @@ def main():
                     st.error(f"Error loading session: {e}")
 
     # --- MAIN CONTENT ---
+
+    # Wrong-file guard: catch mismatched uploads before any review work happens
+    consistency_problems = check_report_consistency(
+        st.session_state.revenue_df, st.session_state.expenditure_df
+    )
+    if consistency_problems:
+        st.error(
+            "**Report consistency check failed — verify your uploaded files "
+            "before continuing:**\n\n" +
+            "\n".join(f"- {p}" for p in consistency_problems)
+        )
+
+    # Heuristic: does the cash report filename look like it belongs to the
+    # entity under review? Generic words are ignored; if no distinctive
+    # token from the entity name appears in the filename, warn (not block).
+    _cash_name = st.session_state.get('cash_file_name', '')
+    _entity = st.session_state.get('entity_name', '')
+    if _cash_name and _entity:
+        _generic = {'public', 'schools', 'school', 'academy', 'charter',
+                    'consolidated', 'municipal', 'independent', 'district',
+                    'community', 'learning', 'center', 'the'}
+        _tokens = [t for t in re.findall(r"[A-Za-z]{4,}", _entity)
+                   if t.lower() not in _generic]
+        if _tokens and not any(t.lower() in _cash_name.lower() for t in _tokens):
+            st.warning(
+                f"**Possible entity mismatch:** the Cash Report file is named "
+                f"*{_cash_name}*, but the review entity is **{_entity}**. "
+                f"Verify the cash report belongs to this entity before "
+                f"relying on the reconciliation checks (Steps 48–49)."
+            )
+
     if st.session_state.cash_df is not None:
         
         user_inputs = {
@@ -2855,6 +3238,8 @@ def main():
             'step_7_budget': st.session_state.get('step_7_budget', 0.0),
             'step_47_last_year': st.session_state.get('step_47_last_year', 0.0),
             'step_47_this_year': st.session_state.get('step_47_this_year', 0.0),
+            'enroll_projected': st.session_state.get('enroll_projected', 0.0),
+            'enroll_40day': st.session_state.get('enroll_40day', 0.0),
         }
 
         # Run Validations
@@ -2903,6 +3288,33 @@ def main():
                 for concern in analysis_summary['concerns'][:10]:
                     st.write(f"• {concern}")
 
+        # Enrollment Projection Outlook
+        with st.expander("Enrollment Projection Outlook (40-Day vs Projection)", expanded=False):
+            st.caption(
+                "Compare the entity's funded growth projection against the 40-Day "
+                "actual membership count. Unmet projections trigger a mid-year SEG "
+                "adjustment and can create a cash flow crunch."
+            )
+            ec1, ec2 = st.columns(2)
+            st.session_state['enroll_projected'] = ec1.number_input(
+                "Projected Membership (MEM)",
+                value=st.session_state.get('enroll_projected', 0.0),
+                min_value=0.0, step=1.0, key="enroll_proj_input")
+            st.session_state['enroll_40day'] = ec2.number_input(
+                "40-Day Actual Count (MEM)",
+                value=st.session_state.get('enroll_40day', 0.0),
+                min_value=0.0, step=1.0, key="enroll_40d_input")
+            enroll_findings = st.session_state.validation_results.get(56, [])
+            for level, msg in enroll_findings:
+                if level == "FLAG":
+                    st.error(msg)
+                elif level == "WARN":
+                    st.warning(msg)
+                elif level == "PASS":
+                    st.success(msg)
+                else:
+                    st.info(msg)
+
         # Filters
         c1, c2 = st.columns([3, 1])
         search = c1.text_input("Search", "")
@@ -2920,6 +3332,10 @@ def main():
         )
         tracker_bytes = export_checklist_tracker(st.session_state.checklist_data)
         
+        st.caption(
+            "Reminder: approved actuals become public record on New Mexico's "
+            "Sunshine Portal (OpenBooks) — confirm figures are final before approval."
+        )
         ec1.download_button("Download Findings Memo (Word)", data=memo_bytes, file_name=f"Memo_{st.session_state.entity_name}.docx", mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document", use_container_width=True)
         ec2.download_button("Download Checklist (Excel)", data=tracker_bytes, file_name=f"Tracker_{st.session_state.entity_name}.xlsx", mime="application/vnd.openxmlformats-officedocument.ms-excel", use_container_width=True)
         # Generate HTML Report
@@ -3052,11 +3468,10 @@ def main():
             "**Revenue** and **Expenditure** Actuals reports."
         )
         st.info(
-            "**Need the Revenue or Expenditure reports?** "
-            "Download them from the "
-            "[OBMS Financial Explorer]"
-            "(https://huggingface.co/spaces/bobthehermit/OBMS-Financial-Explorer) "
-            "→ Actuals tab."
+            "**Revenue and Expenditure data pulls directly from OBMS** — "
+            "in the sidebar, pick the fiscal year, period, and entity, then "
+            "click *Pull Revenue & Expenditure*. Only the Cash Report needs "
+            "to be uploaded."
         )
 
 if __name__ == "__main__":

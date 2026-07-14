@@ -1,5 +1,7 @@
 streamlit
 pandas
+numpy
+pyarrow<25  # 25.0.0 segfaults under Streamlit — see repo notes
 openpyxl
 python-docx
 Pillow
