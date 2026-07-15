@@ -2803,6 +2803,12 @@ def export_checklist_tracker(checklist_data: List[Dict]) -> BytesIO:
     return buffer
 
 
+def md_safe(text) -> str:
+    """Escape $ so Streamlit's markdown doesn't typeset two dollar amounts
+    in one line as LaTeX math."""
+    return str(text).replace("$", "\\$")
+
+
 # ---------- BATCH PORTFOLIO SCAN ----------
 
 BATCH_GENERIC_WORDS = {'public', 'schools', 'school', 'academy', 'charter',
@@ -2957,9 +2963,17 @@ def render_batch_dashboard():
                 if concerns:
                     st.error("**Top concerns:**")
                     for c in concerns[:8]:
-                        st.write(f"• {c}")
+                        st.write(f"• {md_safe(c)}")
                 else:
                     st.success("No flagged findings.")
+                if r["tables"]:
+                    st.markdown("**Detail tables:**")
+                    for step in sorted(r["tables"].keys()):
+                        tf = r["tables"][step]
+                        if not tf['data'].empty:
+                            st.caption(f"Step {step} — {tf.get('title', '')}")
+                            st.dataframe(tf['data'], width="stretch",
+                                         hide_index=True)
                 if not r["cash_name"]:
                     st.caption(
                         "No cash report matched — cash reconciliation steps "
@@ -3526,7 +3540,7 @@ def main():
         if analysis_summary.get('concerns'):
             with st.expander(f"Key Concerns ({len(analysis_summary['concerns'])})", expanded=True):
                 for concern in analysis_summary['concerns'][:10]:
-                    st.write(f"• {concern}")
+                    st.write(f"• {md_safe(concern)}")
 
         # Enrollment Projection Outlook
         with st.expander("Enrollment Projection Outlook (40-Day vs Projection)", expanded=False):
@@ -3547,13 +3561,13 @@ def main():
             enroll_findings = st.session_state.validation_results.get(56, [])
             for level, msg in enroll_findings:
                 if level == "FLAG":
-                    st.error(msg)
+                    st.error(md_safe(msg))
                 elif level == "WARN":
-                    st.warning(msg)
+                    st.warning(md_safe(msg))
                 elif level == "PASS":
-                    st.success(msg)
+                    st.success(md_safe(msg))
                 else:
-                    st.info(msg)
+                    st.info(md_safe(msg))
 
         # Filters
         c1, c2 = st.columns([3, 1])
@@ -3640,12 +3654,12 @@ def main():
                         if flags:
                             st.error("**Automated Findings — Issues**")
                             for _, msg in flags:
-                                st.write(f"• {msg}")
+                                st.write(f"• {md_safe(msg)}")
                         
                         if passes:
                             st.success("**Automated Findings — Passed**")
                             for _, msg in passes:
-                                st.write(f"• {msg}")
+                                st.write(f"• {md_safe(msg)}")
                     
                     # RENDER TABLE FINDINGS
                     render_findings_table(step_id, st.session_state.table_findings)
