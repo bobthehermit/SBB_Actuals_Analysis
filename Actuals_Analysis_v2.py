@@ -2798,15 +2798,15 @@ def export_findings_memo(checklist_data: List[Dict], entity_name: str, analysis_
     return buffer
 
 def export_checklist_tracker(checklist_data: List[Dict]) -> BytesIO:
-    # Column layout matches the district email instructions:
-    # D = Reviewer Notes, E = District Response (for the district to fill in)
+    # Column layout MUST match the district feedback workbook's quarter tabs
+    # (Step, Review Area, Check, Status, Notes) — the workbook's XLOOKUPs
+    # pull internal notes from column E of the pasted quarter tab.
     df = pd.DataFrame([{
             "Step": item['step'],
             "Review Area": item['review_area'],
             "Check": item['check'],
-            "Reviewer Notes": item['user_notes'],
-            "District Response": "",
             "Status": "✓" if item['completed'] else "✗",
+            "Notes": item['user_notes'],
         } for item in checklist_data])
 
     buffer = BytesIO()
@@ -2837,18 +2837,116 @@ def current_fy_quarter() -> Tuple[str, str]:
     return fy_short, quarter
 
 
+# Quarterly Feedback tab: each quarter owns a (notes, response) column pair
+FEEDBACK_COLS = {"Q1": ("B", "C"), "Q2": ("D", "E"),
+                 "Q3": ("F", "G"), "Q4": ("H", "I")}
+
+# Feedback workbook structure: quarter -> (quarter data tab, internal-notes
+# column in 'Quarterly Checklist'). Q1's tab is historically named
+# 'Checklist'; later quarters follow the qNChecklist pattern.
+FEEDBACK_QTABS = {"Q1": ("Checklist", 8), "Q2": ("q2Checklist", 10),
+                  "Q3": ("q3Checklist", 12), "Q4": ("q4Checklist", 14)}
+
+
+def fill_feedback_workbook(wb_bytes: BytesIO, checklist_data: List[Dict],
+                           quarter: str) -> Tuple[Optional[BytesIO], Dict]:
+    """Fill the district's standard feedback-checklist workbook for one
+    quarter: write Status/Notes into the quarter tab (creating it if
+    missing), wire the quarter's internal-notes XLOOKUP column in
+    'Quarterly Checklist' if not yet wired, and stamp the review date and
+    period on 'Quarterly Feedback'. Returns (filled copy, report). The
+    uploaded original is never modified."""
+    import openpyxl
+    report = {"written": 0, "mismatches": [], "tab_created": False,
+              "formulas_wired": 0, "warnings": []}
+    if quarter not in FEEDBACK_QTABS:
+        report["warnings"].append(f"Unknown quarter '{quarter}'.")
+        return None, report
+
+    tab_name, qc_col = FEEDBACK_QTABS[quarter]
+    by_step = {int(item['step']): item for item in checklist_data}
+
+    try:
+        wb = openpyxl.load_workbook(wb_bytes)
+    except Exception as e:
+        report["warnings"].append(f"Could not open workbook: {e}")
+        return None, report
+
+    # --- 1. Quarter data tab: fill or create ---
+    if tab_name in wb.sheetnames:
+        ws = wb[tab_name]
+        for r in range(2, ws.max_row + 1):
+            step_val = ws.cell(row=r, column=1).value
+            try:
+                step = int(step_val)
+            except (TypeError, ValueError):
+                continue
+            item = by_step.get(step)
+            if item is None:
+                report["mismatches"].append(
+                    f"Workbook row {r} (step {step}) has no matching app "
+                    f"checklist step — left untouched.")
+                continue
+            wb_check = str(ws.cell(row=r, column=3).value or "").strip()
+            app_check = str(item['check']).strip()
+            if wb_check and wb_check != app_check:
+                report["mismatches"].append(
+                    f"Step {step}: check text differs between workbook and "
+                    f"app checklist — wrote by step number anyway.")
+            ws.cell(row=r, column=4).value = "✓" if item['completed'] else "✗"
+            ws.cell(row=r, column=5).value = item['user_notes'] or None
+            report["written"] += 1
+    else:
+        ws = wb.create_sheet(tab_name)
+        ws.append(["Step", "Review Area", "Check", "Status", "Notes"])
+        for item in sorted(checklist_data, key=lambda x: int(x['step'])):
+            ws.append([int(item['step']), item['review_area'], item['check'],
+                       "✓" if item['completed'] else "✗",
+                       item['user_notes'] or None])
+            report["written"] += 1
+        report["tab_created"] = True
+
+    # --- 2. Wire the quarter's internal-notes formulas if absent ---
+    # Clone the Q1 (column H) XLOOKUP pattern, swapping the tab reference.
+    if "Quarterly Checklist" in wb.sheetnames and quarter != "Q1":
+        qc = wb["Quarterly Checklist"]
+        for r in range(2, qc.max_row + 1):
+            h_val = qc.cell(row=r, column=8).value
+            target = qc.cell(row=r, column=qc_col)
+            if (isinstance(h_val, str) and h_val.startswith("=")
+                    and "Checklist!" in h_val
+                    and (target.value in (None, ""))):
+                target.value = h_val.replace("Checklist!", f"{tab_name}!")
+                report["formulas_wired"] += 1
+
+    # --- 3. Stamp review date and period on the Feedback letter ---
+    if "Quarterly Feedback" in wb.sheetnames:
+        fb = wb["Quarterly Feedback"]
+        try:
+            fb["C6"] = datetime.now().date()
+            fb["E11"] = quarter
+        except Exception as e:
+            report["warnings"].append(f"Could not stamp date/period: {e}")
+
+    out = BytesIO()
+    wb.save(out)
+    out.seek(0)
+    return out, report
+
+
 def build_district_email(fy_short: str, quarter: str) -> str:
     """District findings email from the standard SBB template, with fiscal
     year and quarter filled in. Output is plain text for the contacts app's
     batch sender."""
+    note_col, resp_col = FEEDBACK_COLS.get(quarter, ("D", "E"))
     return f"""Good afternoon,
 
 I have completed the review of your {fy_short} {quarter} Actuals submission. Please find the official Findings Memo (the Excel file) and supporting documents attached to this email.
 
 Action Required: Excel Findings Memo
-My review notes are located in Column D of the attached Excel file. Please complete the following steps:
+My review notes are located in Column {note_col} of the Quarterly Feedback tab in the attached Excel file. Please complete the following steps:
 
-1. Review the notes and provide your responses in Column E (if applicable).
+1. Review the notes and provide your responses in Column {resp_col} (if applicable).
 2. Save the updated file.
 3. Upload the file to the FTS in the {fy_short} {quarter} folder.
 
@@ -3692,6 +3790,54 @@ def main():
             help="Standard findings email with FY/quarter filled in — paste "
                  "into the contacts app's batch sender."
         )
+
+        with st.expander("Fill District Feedback Workbook (Excel)", expanded=False):
+            st.caption(
+                "Upload the district's standard Feedback-Checklist workbook. "
+                "The app writes this review's Status and Notes into the "
+                "quarter's tab (creating it if needed), wires the quarter's "
+                "internal-notes formulas in 'Quarterly Checklist' if absent, "
+                "and stamps the review date and period on the Feedback "
+                "letter. You get back a filled copy — the uploaded file "
+                "itself is never modified. Open the result in Excel to "
+                "verify before sending."
+            )
+            fb_file = st.file_uploader(
+                "Feedback-Checklist workbook", type=['xlsx'],
+                key="feedback_wb", label_visibility="collapsed")
+            _q_norm = _quarter if _quarter in FEEDBACK_QTABS else "Q1"
+            fb_quarter = st.selectbox(
+                "Quarter to fill", list(FEEDBACK_QTABS.keys()),
+                index=list(FEEDBACK_QTABS.keys()).index(_q_norm),
+                key="feedback_quarter")
+            if fb_file is not None and st.button(
+                    "Fill Workbook", key="fill_feedback_btn"):
+                filled, rpt = fill_feedback_workbook(
+                    BytesIO(fb_file.getvalue()),
+                    st.session_state.checklist_data, fb_quarter)
+                if filled is None:
+                    st.error(" / ".join(rpt["warnings"]) or "Fill failed.")
+                else:
+                    bits = [f"{rpt['written']} steps written"]
+                    if rpt["tab_created"]:
+                        bits.append(f"created tab '{FEEDBACK_QTABS[fb_quarter][0]}'")
+                    if rpt["formulas_wired"]:
+                        bits.append(f"wired {rpt['formulas_wired']} internal-notes formulas")
+                    st.success("Done: " + ", ".join(bits) + ".")
+                    for w in rpt["warnings"]:
+                        st.warning(w)
+                    if rpt["mismatches"]:
+                        with st.expander(
+                                f"Checklist drift ({len(rpt['mismatches'])})"):
+                            for m_ in rpt["mismatches"]:
+                                st.write(f"• {m_}")
+                    base = fb_file.name.rsplit('.', 1)[0]
+                    st.download_button(
+                        "Download Filled Workbook",
+                        data=filled,
+                        file_name=f"{base}_{fb_quarter}_filled.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        key="dl_filled_feedback")
         st.divider()
 
         # Checklist
