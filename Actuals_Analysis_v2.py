@@ -488,6 +488,16 @@ def calculate_rollup_sum(df: pd.DataFrame, fund_key: str, amount_col: str) -> fl
     else:
         return df[df['Fund_Key'] == fund_key][amount_col].sum()
 
+# Internal finding keys outside the bureau's established checklist numbering
+# (steps 1-71 are bureau-wide and must not be repurposed).
+ENROLLMENT_STEP = 900
+STEP_LABELS = {ENROLLMENT_STEP: "Enrollment Outlook"}
+
+
+def step_label(step) -> str:
+    return STEP_LABELS.get(step, f"Step {step}")
+
+
 def run_all_validations(cash_df, revenue_df, expenditure_df, entity_name, is_q1, user_inputs):
     """
     Returns:
@@ -1450,27 +1460,27 @@ def run_all_validations(cash_df, revenue_df, expenditure_df, entity_name, is_q1,
     if ly != 0 and ty != 0 and abs(ly - ty) > 0.01:
         add_finding(47, f"Cash Balance Difference: Last Year ${ly:,.2f} vs This Year ${ty:,.2f}")
 
-    # Step 56: Enrollment Projection Outlook (growth projection vs 40-day count)
+    # Enrollment Projection Outlook (growth projection vs 40-day count)
     proj = user_inputs.get('enroll_projected', 0.0)
     actual = user_inputs.get('enroll_40day', 0.0)
     if proj > 0 and actual > 0:
         diff = actual - proj
         pct = (diff / proj) * 100
         if diff < 0:
-            add_finding(56,
+            add_finding(ENROLLMENT_STEP,
                 f"40-Day count ({actual:,.1f} MEM) is BELOW projection ({proj:,.1f} MEM) "
                 f"by {abs(diff):,.1f} ({pct:.1f}%)")
-            add_finding(56,
+            add_finding(ENROLLMENT_STEP,
                 "Unmet enrollment projections trigger a mid-year SEG adjustment. "
                 "Review the entity's cash position and budgeted SEG against the shortfall — "
                 "a downward adjustment mid-year can create a cash flow crunch.",
                 level="WARN")
             if pct < -2.0:
-                add_finding(56,
+                add_finding(ENROLLMENT_STEP,
                     f"Shortfall exceeds 2% — recommend contacting the entity about its "
                     f"plan for absorbing the SEG reduction.", level="WARN")
         else:
-            add_finding(56,
+            add_finding(ENROLLMENT_STEP,
                 f"40-Day count ({actual:,.1f} MEM) meets or exceeds projection "
                 f"({proj:,.1f} MEM) by {diff:,.1f} ({pct:+.1f}%)", is_pass=True)
 
@@ -1526,9 +1536,9 @@ def generate_analysis_summary(cash_df, revenue_df, expenditure_df, entity_name, 
         for finding in findings:
             status, msg = finding
             if status == "FLAG":
-                summary['concerns'].append(f"Step {step}: {msg}")
+                summary['concerns'].append(f"{step_label(step)}: {msg}")
             elif status == "PASS":
-                summary['highlights'].append(f"Step {step}: {msg}")
+                summary['highlights'].append(f"{step_label(step)}: {msg}")
     
     return summary
 
@@ -2046,7 +2056,7 @@ def generate_html_report(
         items_html = ""
         for c in concern_list[:8]:
             msg = c['message'].strip()
-            items_html += f'<div class="concern-card {color_class}"><div class="concern-icon">{icon}</div><div class="concern-body"><span class="concern-step">Step {c["step"]}</span>{msg}</div></div>\n'
+            items_html += f'<div class="concern-card {color_class}"><div class="concern-icon">{icon}</div><div class="concern-body"><span class="concern-step">{step_label(c["step"])}</span>{msg}</div></div>\n'
         return items_html
     
     high_concerns_html = build_concern_card(concerns_high, 'High', '&#9650;', 'high')
@@ -2788,12 +2798,15 @@ def export_findings_memo(checklist_data: List[Dict], entity_name: str, analysis_
     return buffer
 
 def export_checklist_tracker(checklist_data: List[Dict]) -> BytesIO:
+    # Column layout matches the district email instructions:
+    # D = Reviewer Notes, E = District Response (for the district to fill in)
     df = pd.DataFrame([{
             "Step": item['step'],
             "Review Area": item['review_area'],
             "Check": item['check'],
+            "Reviewer Notes": item['user_notes'],
+            "District Response": "",
             "Status": "✓" if item['completed'] else "✗",
-            "Notes": item['user_notes']
         } for item in checklist_data])
 
     buffer = BytesIO()
@@ -2807,6 +2820,52 @@ def md_safe(text) -> str:
     """Escape $ so Streamlit's markdown doesn't typeset two dollar amounts
     in one line as LaTeX math."""
     return str(text).replace("$", "\\$")
+
+
+def current_fy_quarter() -> Tuple[str, str]:
+    """Best-guess FY/quarter strings for the district email, from the OBMS
+    pull when available, otherwise from the calendar. Always editable text."""
+    fy_code = st.session_state.get("obms_fy") or st.session_state.get("batch_fy")
+    if fy_code:
+        fy_short = f"FY{fy_code[2:]}"
+    else:
+        now = datetime.now()
+        fy_num = now.year + 1 if now.month >= 7 else now.year
+        fy_short = f"FY{str(fy_num)[2:]}"
+    q = st.session_state.get('obms_pulled_period') or ""
+    quarter = q.replace("Q0", "Q") if q else "Q_"
+    return fy_short, quarter
+
+
+def build_district_email(fy_short: str, quarter: str) -> str:
+    """District findings email from the standard SBB template, with fiscal
+    year and quarter filled in. Output is plain text for the contacts app's
+    batch sender."""
+    return f"""Good afternoon,
+
+I have completed the review of your {fy_short} {quarter} Actuals submission. Please find the official Findings Memo (the Excel file) and supporting documents attached to this email.
+
+Action Required: Excel Findings Memo
+My review notes are located in Column D of the attached Excel file. Please complete the following steps:
+
+1. Review the notes and provide your responses in Column E (if applicable).
+2. Save the updated file.
+3. Upload the file to the FTS in the {fy_short} {quarter} folder.
+
+Additional Attachments for Your Convenience:
+
+* Microsoft Word Document: A consolidated list of all the notes found in the Excel spreadsheet.
+* HTML File: A supplementary analysis containing visuals and graphs. You can open this file in any standard web browser.
+
+Important Reminder Regarding Approved Actuals: Once approved, these actuals will be published on Open Books, the NMPED transparency website. To view the district report once posted:
+
+1. Navigate to https://openbooks.ped.nm.gov/
+2. Click on Districts.
+3. Select the appropriate fiscal year and District.
+4. Click the blue refresh button in the upper right corner of the page.
+
+Thank you,
+"""
 
 
 # ---------- BATCH PORTFOLIO SCAN ----------
@@ -2978,6 +3037,15 @@ def render_batch_dashboard():
                     st.caption(
                         "No cash report matched — cash reconciliation steps "
                         "(48–54) were skipped for this entity.")
+                _fy_code = st.session_state.get("batch_fy") or ""
+                _fy_short = f"FY{_fy_code[2:]}" if _fy_code else "FY_"
+                _q = r["period"].replace("Q0", "Q")
+                st.download_button(
+                    "Download District Email (Text)",
+                    data=build_district_email(_fy_short, _q),
+                    file_name=f"Email_{r['entity'].replace(' ', '_')}_{_fy_short}_{_q}.txt",
+                    mime="text/plain", key=f"batch_email_{idx}",
+                    width="stretch")
                 if st.button("Open in Single Entity Review",
                              key=f"batch_open_{idx}", width="stretch"):
                     st.session_state.revenue_df = r["rev_df"]
@@ -3558,7 +3626,7 @@ def main():
                 "40-Day Actual Count (MEM)",
                 value=st.session_state.get('enroll_40day', 0.0),
                 min_value=0.0, step=1.0, key="enroll_40d_input")
-            enroll_findings = st.session_state.validation_results.get(56, [])
+            enroll_findings = st.session_state.validation_results.get(ENROLLMENT_STEP, [])
             for level, msg in enroll_findings:
                 if level == "FLAG":
                     st.error(md_safe(msg))
@@ -3576,7 +3644,7 @@ def main():
 
         # Exports
         st.divider()
-        ec1, ec2, ec3 = st.columns(3)
+        ec1, ec2, ec3, ec4 = st.columns(4)
         
         memo_bytes = export_findings_memo(
             st.session_state.checklist_data, 
@@ -3612,6 +3680,17 @@ def main():
             file_name=f"Analysis_{st.session_state.entity_name}.html",
             mime="text/html",
             width="stretch"
+        )
+
+        _fy_short, _quarter = current_fy_quarter()
+        ec4.download_button(
+            "Download District Email (Text)",
+            data=build_district_email(_fy_short, _quarter),
+            file_name=f"Email_{st.session_state.entity_name}_{_fy_short}_{_quarter}.txt",
+            mime="text/plain",
+            width="stretch",
+            help="Standard findings email with FY/quarter filled in — paste "
+                 "into the contacts app's batch sender."
         )
         st.divider()
 
