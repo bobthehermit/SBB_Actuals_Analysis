@@ -1567,13 +1567,19 @@ def generate_html_report(
     
     review_date = datetime.now().strftime("%B %d, %Y")
     now = datetime.now()
-    fiscal_year_num = now.year if now.month >= 7 else now.year - 1
-    fy_short = str(fiscal_year_num + 1)[2:]  # e.g. "26" for FY26
-    fiscal_year = f"FY{fy_short}"
-    
-    # Determine quarter from review context
-    quarter_label = "Q1"  # Default; could be passed as param in future
-    
+
+    # Pull FY/quarter from the OBMS pull context (same source current_fy_quarter()
+    # uses for the district email), falling back to a calendar guess only if
+    # that context isn't available. This avoids mislabeling late reviews (e.g.
+    # a Q3 review run in August) as the calendar-current quarter.
+    fiscal_year, quarter_label = current_fy_quarter()
+    if not fiscal_year:
+        fiscal_year_num = now.year if now.month >= 7 else now.year - 1
+        fy_short = str(fiscal_year_num + 1)[2:]  # e.g. "26" for FY26
+        fiscal_year = f"FY{fy_short}"
+    if not quarter_label or quarter_label == "Q_":
+        quarter_label = "Q1"  # last-resort default if no OBMS period is set
+
     # Due date calculation
     from datetime import timedelta
     review_dt = now
