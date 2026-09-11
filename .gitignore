@@ -1,6 +1,17 @@
 # Archive folder
 archive/
+
+# macOS
+.DS_Store
+
 # Python
 __pycache__/
 *.pyc
+venv/
 .env
+
+# Local data & saved sessions (never commit district files)
+*.pkl
+*.xlsx
+*.csv
+!Actuals_Checklist.csv

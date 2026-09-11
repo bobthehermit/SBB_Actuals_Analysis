@@ -7,6 +7,7 @@ import os
 import re
 import base64
 import pickle
+import hashlib
 import urllib.request
 from io import BytesIO
 from pathlib import Path
@@ -112,11 +113,17 @@ def load_obms_registry() -> dict:
     return {}
 
 
-@st.cache_data(ttl=3600, max_entries=4, show_spinner="Loading OBMS data from Google Drive…")
+@st.cache_resource(ttl=3600, max_entries=4, show_spinner="Loading OBMS data from Google Drive…")
 def load_obms_parquet(file_key: str, file_id: str) -> pd.DataFrame:
     """Download one parquet from Google Drive, materializing only the
     columns this app needs (same pruned-read approach as the Explorer).
-    file_id is part of the cache key so manifest updates bust stale entries."""
+    file_id is part of the cache key so manifest updates bust stale entries.
+
+    cache_resource (not cache_data) on purpose: cache_data pickles the
+    frame on store and UNpickles a fresh copy on every hit, so each rerun
+    materialized another full-year, all-entity copy. cache_resource hands
+    back the one shared object. That's only safe because nothing below
+    mutates these frames — treat them as read-only."""
     if not file_id:
         return pd.DataFrame()
     try:
@@ -137,6 +144,26 @@ def load_obms_parquet(file_key: str, file_id: str) -> pd.DataFrame:
     except Exception as e:
         st.warning(f"Failed to load {file_key}: {e}")
         return pd.DataFrame()
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def obms_periods_and_entities(file_id: str, _act_df: pd.DataFrame) -> Tuple[List[str], List[str]]:
+    """Sorted unique Reporting Periods and Budget Entities for one FY.
+    The leading underscore on _act_df tells Streamlit NOT to hash that
+    argument (hashing a full-year frame every rerun would defeat the
+    point); file_id alone identifies the data, so it is the cache key."""
+    periods = sorted(_act_df["Reporting Period"].dropna().unique().tolist())
+    entities = sorted(_act_df["Budget Entity"].dropna().unique().tolist())
+    return periods, entities
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def obms_entity_period_counts(file_id: str, entity: str, _act_df: pd.DataFrame) -> Dict[str, int]:
+    """Actuals row count per Reporting Period for one entity — the
+    'submitted yet?' caption. Cached per (file_id, entity) so the groupby
+    runs once per entity, not once per checkbox click."""
+    ent_rows = _act_df[_act_df["Budget Entity"] == entity]
+    return {str(k): int(v) for k, v in ent_rows.groupby("Reporting Period").size().items()}
 
 
 def build_obms_actuals_report(act_df, bud_df, entity_name, account_type) -> pd.DataFrame:
@@ -491,6 +518,14 @@ def calculate_rollup_sum(df: pd.DataFrame, fund_key: str, amount_col: str) -> fl
 # Internal finding keys outside the bureau's established checklist numbering
 # (steps 1-71 are bureau-wide and must not be repurposed).
 ENROLLMENT_STEP = 900
+
+# Numeric inputs the reviewer types in (Steps 6/7/47 + enrollment). One list
+# so the save/restore/fingerprint code can't drift out of sync.
+USER_INPUT_KEYS = [
+    'step_6_period', 'step_6_ytd', 'step_7_budget',
+    'step_47_last_year', 'step_47_this_year',
+    'enroll_projected', 'enroll_40day',
+]
 STEP_LABELS = {ENROLLMENT_STEP: "Enrollment Outlook"}
 
 
@@ -498,7 +533,12 @@ def step_label(step) -> str:
     return STEP_LABELS.get(step, f"Step {step}")
 
 
+@st.cache_data(show_spinner="Running checklist validations…", max_entries=8)
 def run_all_validations(cash_df, revenue_df, expenditure_df, entity_name, is_q1, user_inputs):
+    """Pure function of its inputs (no st.* calls inside), so it is safe to
+    cache. Streamlit hashes DataFrame args by CONTENT (pd.util.hash_pandas_object),
+    so the cache only misses when the data, entity, period, or a typed-in
+    input (Step 6/7/47, enrollment) actually changes — not on checkbox clicks."""
     """
     Returns:
         results: Dict[step, List[(status, msg)]] - text findings
@@ -1488,7 +1528,10 @@ def run_all_validations(cash_df, revenue_df, expenditure_df, entity_name, is_q1,
 
 # ---------- ANALYSIS SUMMARY GENERATOR ----------
 
+@st.cache_data(show_spinner=False, max_entries=8)
 def generate_analysis_summary(cash_df, revenue_df, expenditure_df, entity_name, is_q1, validation_results) -> Dict:
+    """Cached for the same reason as run_all_validations. validation_results
+    is a dict of lists of tuples — hashable by cache_data."""
     """Generate comprehensive analysis summary for memo export."""
     summary = {
         'entity': entity_name,
@@ -3183,6 +3226,40 @@ if 'welcome_dismissed' not in st.session_state:
     st.session_state.welcome_dismissed = False
 
 # ---------- NOTES PERSISTENCE CALLBACK ----------
+def review_fingerprint() -> str:
+    """Cheap hash of the review state that exports depend on. Used to
+    detect when prepared download files are stale. Deliberately skips the
+    DataFrames (hashing them every rerun is what we're trying to avoid);
+    entity + period stand in for them."""
+    ss = st.session_state
+    parts = [
+        ss.get('entity_name', ''),
+        str(ss.get('obms_pulled_period')),
+        str(ss.get('cash_file_name', '')),
+        "".join("1" if i['completed'] else "0" for i in ss.get('checklist_data', [])),
+        repr(sorted(ss.get('notes_by_step', {}).items())),
+    ] + [str(ss.get(k, 0.0)) for k in USER_INPUT_KEYS]
+    return hashlib.md5("|".join(parts).encode("utf-8")).hexdigest()
+
+
+def collect_session_for_save() -> Dict:
+    """Everything the .pkl needs to restore a review. Called only when the
+    user clicks Save, not on every rerun."""
+    ss = st.session_state
+    state = {
+        'checklist_data': ss.checklist_data,
+        'notes_by_step': ss.notes_by_step,
+        'cash_df': ss.cash_df,
+        'revenue_df': ss.revenue_df,
+        'expenditure_df': ss.expenditure_df,
+        'entity_name': ss.entity_name,
+        'obms_pulled_period': ss.get('obms_pulled_period'),
+    }
+    for k in USER_INPUT_KEYS:
+        state[k] = ss.get(k, 0.0)
+    return state
+
+
 def save_note_callback(step_id: int):
     '''Callback to immediately save notes when changed - fixes notes not saving issue'''
     key = f"n_{step_id}"
@@ -3418,18 +3495,17 @@ def main():
                     if obms_act.empty:
                         st.warning("No actuals data available for that fiscal year yet.")
                     else:
-                        periods = sorted(obms_act["Reporting Period"].dropna().unique().tolist())
+                        _act_id = registry.get(f"actuals_{fy_code}", "")
+                        periods, entities = obms_periods_and_entities(_act_id, obms_act)
                         sel_period = st.selectbox(
                             "Reporting Period", periods,
                             index=len(periods) - 1, key="obms_period"
                         )
-                        entities = sorted(obms_act["Budget Entity"].dropna().unique().tolist())
                         sel_entity = st.selectbox("Entity", entities, key="obms_entity")
 
                         # Submission visibility: actuals rows per period for this
                         # entity, so unsubmitted quarters are obvious BEFORE pulling.
-                        ent_rows = obms_act[obms_act["Budget Entity"] == sel_entity]
-                        per_counts = ent_rows.groupby("Reporting Period").size().to_dict()
+                        per_counts = obms_entity_period_counts(_act_id, sel_entity, obms_act)
                         st.caption(
                             "Actuals rows in OBMS: " + " · ".join(
                                 f"{p}: {per_counts.get(p, 0):,}" +
@@ -3515,37 +3591,32 @@ def main():
                 "so you can close the browser and pick up later."
             )
 
-            current_state = {
-                'checklist_data': st.session_state.checklist_data,
-                'notes_by_step': st.session_state.notes_by_step,
-                'cash_df': st.session_state.cash_df,
-                'revenue_df': st.session_state.revenue_df,
-                'expenditure_df': st.session_state.expenditure_df,
-                'entity_name': st.session_state.entity_name,
-                'step_6_period': st.session_state.get('step_6_period', 0.0),
-                'step_6_ytd': st.session_state.get('step_6_ytd', 0.0),
-                'step_7_budget': st.session_state.get('step_7_budget', 0.0),
-                'step_47_last_year': st.session_state.get('step_47_last_year', 0.0),
-                'step_47_this_year': st.session_state.get('step_47_this_year', 0.0),
-                'enroll_projected': st.session_state.get('enroll_projected', 0.0),
-                'enroll_40day': st.session_state.get('enroll_40day', 0.0),
-                'obms_pulled_period': st.session_state.get('obms_pulled_period'),
-            }
-
-            buffer = BytesIO()
-            pickle.dump(current_state, buffer)
-            buffer.seek(0)
-
+            # Two-click save: "Prepare" pickles the session (this used to
+            # happen on EVERY rerun, serializing three DataFrames each time
+            # a checkbox was ticked); "Download" then serves the bytes.
             entity_slug = (st.session_state.entity_name.replace(' ', '_')
                            if st.session_state.entity_name else "Review")
-            st.download_button(
-                label="Save Your Progress",
-                data=buffer,
-                file_name=f"Review_{entity_slug}_{datetime.now().strftime('%Y%m%d')}.pkl",
-                mime="application/octet-stream",
-                width="stretch",
-                help="Downloads a file that stores your entire review session."
-            )
+            if st.button("Prepare save file", width="stretch"):
+                buffer = BytesIO()
+                pickle.dump(collect_session_for_save(), buffer)
+                st.session_state.prepared_save = {
+                    'bytes': buffer.getvalue(),
+                    'sig': review_fingerprint(),
+                    'at': datetime.now().strftime('%H:%M:%S'),
+                }
+            _ps = st.session_state.get('prepared_save')
+            if _ps:
+                _stale = _ps['sig'] != review_fingerprint()
+                st.download_button(
+                    label=("Download Progress (changed since prepared)"
+                           if _stale else f"Download Progress ({_ps['at']})"),
+                    data=_ps['bytes'],
+                    file_name=f"Review_{entity_slug}_{datetime.now().strftime('%Y%m%d')}.pkl",
+                    mime="application/octet-stream",
+                    width="stretch",
+                    type="secondary" if _stale else "primary",
+                    help="Downloads a file that stores your entire review session."
+                )
 
             st.markdown("")
             st.markdown("**Resume a Previous Review**")
@@ -3564,14 +3635,12 @@ def main():
                         st.session_state.revenue_df = data.get('revenue_df')
                         st.session_state.expenditure_df = data.get('expenditure_df')
                         st.session_state.entity_name = data.get('entity_name', "")
-                        st.session_state['step_6_period'] = data.get('step_6_period', 0.0)
-                        st.session_state['step_6_ytd'] = data.get('step_6_ytd', 0.0)
-                        st.session_state['step_7_budget'] = data.get('step_7_budget', 0.0)
-                        st.session_state['step_47_last_year'] = data.get('step_47_last_year', 0.0)
-                        st.session_state['step_47_this_year'] = data.get('step_47_this_year', 0.0)
-                        st.session_state['enroll_projected'] = data.get('enroll_projected', 0.0)
-                        st.session_state['enroll_40day'] = data.get('enroll_40day', 0.0)
+                        for _k in USER_INPUT_KEYS:
+                            st.session_state[_k] = data.get(_k, 0.0)
                         st.session_state['obms_pulled_period'] = data.get('obms_pulled_period')
+                        # Old prepared exports/saves belong to the previous review
+                        st.session_state.pop('prepared_exports', None)
+                        st.session_state.pop('prepared_save', None)
                         st.session_state.last_loaded_file = uploaded_session.name
                         st.success("Session restored! Your data and notes are loaded.")
                         st.rerun()
@@ -3598,11 +3667,11 @@ def main():
                 if b_act.empty:
                     st.warning("No actuals data available for that fiscal year yet.")
                 else:
-                    b_periods = sorted(b_act["Reporting Period"].dropna().unique().tolist())
+                    b_periods, all_entities = obms_periods_and_entities(
+                        registry.get(f"actuals_{b_fy}", ""), b_act)
                     b_period = st.selectbox(
                         "Reporting Period", b_periods,
                         index=len(b_periods) - 1, key="batch_period")
-                    all_entities = sorted(b_act["Budget Entity"].dropna().unique().tolist())
                     b_entities = st.multiselect(
                         "Portfolio Entities", all_entities, key="batch_entities",
                         help="Your review portfolio — the selection sticks for this session.")
@@ -3746,45 +3815,75 @@ def main():
         search = c1.text_input("Search", "")
         show_incomplete = c2.checkbox("Incomplete Only")
 
-        # Exports
+        # Exports — built ON DEMAND. Previously the Word memo, Excel tracker
+        # and HTML dashboard were all regenerated on every rerun (every
+        # checkbox click) just so download_button had bytes to hold. Now
+        # they're built once when asked and parked in session_state.
         st.divider()
-        ec1, ec2, ec3, ec4 = st.columns(4)
-        
-        memo_bytes = export_findings_memo(
-            st.session_state.checklist_data, 
-            st.session_state.entity_name, 
-            analysis_summary,
-            st.session_state.table_findings
-        )
-        tracker_bytes = export_checklist_tracker(st.session_state.checklist_data)
-        
         st.caption(
             "Reminder: approved actuals become public record on New Mexico's "
             "Sunshine Portal (OpenBooks) — confirm figures are final before approval."
         )
-        ec1.download_button("Download Findings Memo (Word)", data=memo_bytes, file_name=f"Memo_{st.session_state.entity_name}.docx", mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document", width="stretch")
-        ec2.download_button("Download Checklist (Excel)", data=tracker_bytes, file_name=f"Tracker_{st.session_state.entity_name}.xlsx", mime="application/vnd.openxmlformats-officedocument.ms-excel", width="stretch")
-        # Generate HTML Report
-        html_report = generate_html_report(
-            entity_name=st.session_state.entity_name,
-            revenue_df=st.session_state.revenue_df,
-            expenditure_df=st.session_state.expenditure_df,
-            cash_df=st.session_state.cash_df,
-            validation_results=st.session_state.validation_results,
-            table_findings=st.session_state.table_findings,
-            notes_by_step=st.session_state.notes_by_step,
-            checklist_data=st.session_state.checklist_data
-        )
-        html_bytes = BytesIO(html_report.encode('utf-8'))
-        html_bytes.seek(0)
 
-        ec3.download_button(
-            "Download Visual Report (HTML)",
-            data=html_bytes,
-            file_name=f"Analysis_{st.session_state.entity_name}.html",
-            mime="text/html",
-            width="stretch"
-        )
+        # Cheap fingerprint of everything the exports depend on, so we can
+        # tell the user when prepared files have gone stale.
+        export_sig = review_fingerprint()
+        prepared = st.session_state.get('prepared_exports')
+        is_stale = bool(prepared) and prepared.get('sig') != export_sig
+
+        pc1, pc2 = st.columns([1, 3])
+        if pc1.button("Prepare download files", type="primary", width="stretch",
+                      help="Builds the Word memo, Excel tracker and HTML report "
+                           "from the current review state."):
+            with st.spinner("Building memo, tracker and visual report…"):
+                memo_bytes = export_findings_memo(
+                    st.session_state.checklist_data,
+                    st.session_state.entity_name,
+                    analysis_summary,
+                    st.session_state.table_findings
+                )
+                tracker_bytes = export_checklist_tracker(st.session_state.checklist_data)
+                html_report = generate_html_report(
+                    entity_name=st.session_state.entity_name,
+                    revenue_df=st.session_state.revenue_df,
+                    expenditure_df=st.session_state.expenditure_df,
+                    cash_df=st.session_state.cash_df,
+                    validation_results=st.session_state.validation_results,
+                    table_findings=st.session_state.table_findings,
+                    notes_by_step=st.session_state.notes_by_step,
+                    checklist_data=st.session_state.checklist_data
+                )
+                # Store raw bytes, not BytesIO objects: a BytesIO's read
+                # position moves after the first download, and bytes are
+                # trivially re-servable on later reruns.
+                st.session_state.prepared_exports = {
+                    'sig': export_sig,
+                    'memo': memo_bytes.getvalue(),
+                    'tracker': tracker_bytes.getvalue(),
+                    'html': html_report.encode('utf-8'),
+                    'at': datetime.now().strftime('%H:%M:%S'),
+                }
+            prepared = st.session_state.prepared_exports
+            is_stale = False
+
+        if prepared:
+            if is_stale:
+                pc2.warning(f"Files prepared at {prepared['at']} — the review has "
+                            "changed since. Prepare again for current results.")
+            else:
+                pc2.caption(f"Files prepared at {prepared['at']}.")
+
+        ec1, ec2, ec3, ec4 = st.columns(4)
+        if prepared:
+            ec1.download_button("Download Findings Memo (Word)", data=prepared['memo'], file_name=f"Memo_{st.session_state.entity_name}.docx", mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document", width="stretch")
+            ec2.download_button("Download Checklist (Excel)", data=prepared['tracker'], file_name=f"Tracker_{st.session_state.entity_name}.xlsx", mime="application/vnd.openxmlformats-officedocument.ms-excel", width="stretch")
+            ec3.download_button(
+                "Download Visual Report (HTML)",
+                data=prepared['html'],
+                file_name=f"Analysis_{st.session_state.entity_name}.html",
+                mime="text/html",
+                width="stretch"
+            )
 
         _fy_short, _quarter = current_fy_quarter()
         ec4.download_button(
