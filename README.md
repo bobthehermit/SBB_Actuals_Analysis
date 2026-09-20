@@ -4,29 +4,23 @@ A Streamlit application for automating quarterly actuals reviews of New Mexico s
 
 ## What It Does
 
-This app streamlines the quarterly compliance review process by:
-
 - **Automated validation** of Revenue, Expenditure, and Cash reports against a 60+ step checklist
-- **Direct OBMS data pull** — Revenue and Expenditure reports load straight from the OBMS parquet registry (the same Google Drive data store the [OBMS Financial Explorer](https://huggingface.co/spaces/bobthehermit/OBMS-Financial-Explorer) reads), no CSV round trip. File uploads remain available as a fallback source.
-- **Batch Portfolio Scan** — run the full check suite across an entire portfolio of entities in one pass: submission status, revenue/expenditure/cash totals, and flag counts in a single attention-sorted table, with per-entity drill-down and one-click handoff into a full single-entity review
+- **Direct OBMS data pull** — Revenue and Expenditure reports load straight from the OBMS parquet registry (the same Google Drive data store the [OBMS Financial Explorer](https://huggingface.co/spaces/bobthehermit/OBMS-Financial-Explorer) reads). File uploads remain available as a fallback source.
+- **Batch Portfolio Scan** — run the full check suite across an entire portfolio in one pass, with per-entity drill-down and one-click handoff into a single-entity review
 - **Cross-report reconciliation** — Cash Line 2 vs Revenue YTD, Cash Line 5 vs Expenditure YTD, with per-fund rollup logic
-- **Flagging issues** — negative balances, FTE mismatches, forbidden object codes, budget overruns, burn rate outliers, encumbrance risk
+- **Flagging** — negative balances, FTE mismatches, forbidden object codes, budget overruns, burn rate outliers, encumbrance risk
 - **Revenue ratio checks** — Impact Aid, Ad Valorem, Forest Reserve fund distribution compliance
-- **Enrollment Projection Outlook** — compare the funded growth projection against the 40-day actual count; shortfalls flag with mid-year SEG adjustment and cash flow implications
-- **Input guardrails** — entity/fiscal-year consistency checks across reports, a cash-report filename vs. review-entity mismatch warning, per-period actuals row counts shown before pulling, and refusal to pull empty (unsubmitted) periods rather than generating noise findings
-- **Interactive checklist** — track progress, add notes per step, save/resume sessions
-- **Export options**:
-  - Word memo with findings, detail tables, and an OpenBooks public-record notice
-  - Excel checklist tracker
-  - Batch portfolio summary (Excel)
-  - HTML visual dashboard with Chart.js charts (revenue vs expenditure, function breakdown, salary by job class, program spending, etc.)
+- **Enrollment Projection Outlook** — funded growth projection vs the 40-day actual count
+- **Input guardrails** — entity/fiscal-year consistency checks, cash-report filename vs. entity mismatch warning, per-period row counts before pulling, refusal to pull unsubmitted periods
+- **Interactive checklist** with progress tracking and per-step notes, autosaved as you work
+- **Exports** — Word findings memo, Excel checklist tracker, HTML visual dashboard, district email text, and a filled district Feedback-Checklist workbook
 
 ## Data Sources
 
 **Revenue & Expenditure** come from either source, selected in the sidebar:
 
-1. **Pull directly from OBMS** (default) — reads `gdrive_manifest.json` for fiscal-year → Google Drive file IDs, downloads the actuals and budget parquet for the selected year (cached ~1 hour), and builds reports for the selected entity and reporting period. The manifest is fetched from the OBMS Data Explorer repo first (so new fiscal years appear automatically), with the local copy as fallback.
-2. **Upload CSV/Excel files** — exports from the OBMS Financial Explorer's Actuals tab, as before.
+1. **Pull directly from OBMS** (default) — reads `gdrive_manifest.json` for fiscal-year → Google Drive file IDs, loads the actuals and budget parquet for the selected year, and builds reports for the selected entity and reporting period. The manifest is fetched from the OBMS Data Explorer repo first (so new fiscal years appear automatically), with the local copy as fallback.
+2. **Upload CSV/Excel files** — exports from the OBMS Financial Explorer's Actuals tab.
 
 **Cash Reports** are always uploaded (Excel from the district's quarterly submission; the app reads the "Summary" tab). In batch mode, multiple cash reports can be uploaded at once and are matched to entities by filename.
 
@@ -35,6 +29,20 @@ This app streamlines the quarterly compliance review process by:
 | Cash Report | Excel (.xlsx) with a "Summary" tab | Fund, Lines 1-12 |
 | Revenue Report | Pulled from OBMS, or CSV/Excel | Fund, Object, Function, Period Amount, YTD, Budget |
 | Expenditure Report | Pulled from OBMS, or CSV/Excel | Fund, Object, Function, JobClass, Program, Period, YTD, FTE, Budget, Encumbrance |
+
+## Saving and Resuming a Review
+
+There are two layers, designed so you never have to remember to save.
+
+**Autosave (automatic, per browser).** Every time the review changes — a box ticked, a note typed, an input entered — the app writes a compact snapshot to the browser's `localStorage`: checklist status, notes, typed inputs, entity/FY/period, and the cash report Summary tab. Revenue and Expenditure are *not* stored; they are re-pulled from OBMS when you resume. Up to 12 reviews are kept (oldest dropped), so several schools can be in progress at once. After a crash, refresh, or redeploy, the sidebar offers the saved reviews under **Save / Resume Progress → Autosaved reviews in this browser**, with Resume and Delete. Autosave is tied to the browser and host it was created on; it does not follow you to another machine. Reviews built from *uploaded* Revenue/Expenditure files restore everything except those two reports (re-upload them).
+
+**Portable save file (manual).** Click **Prepare save file**, then **Download Progress** to get a `.pkl` that contains the full review including the DataFrames. Use this to move a review between machines or file it alongside the district's folder. Restore it with **Resume a Previous Review**. The download button label tells you if the review has changed since the file was prepared.
+
+**Start a new review** clears the loaded data, checklist, and notes. Pulling a different entity or period from OBMS also starts clean — the previous review remains in autosave.
+
+## Exports
+
+Click **Prepare download files** to build the Word memo, Excel tracker, and HTML report from the current state; the download buttons then appear. Exports are built only on request (not on every interaction), and the app warns when prepared files are older than the review.
 
 ## Running Locally
 
@@ -45,12 +53,26 @@ streamlit run Actuals_Analysis_v2.py
 
 ### Environment notes (important)
 
-- **`pyarrow` must stay below 25** (pinned in `requirements.txt`). pyarrow 25.0.0 has a native bug that segfaults ("Python quit unexpectedly", `zsh: segmentation fault`) under Streamlit's dataframe serialization — reproduced across pandas 2.x and 3.x. pyarrow 24.0.0 is stable. Note that `pip install -U pyarrow` will happily reinstall the broken newest version; use `pip install "pyarrow==24.0.0"` if the local venv drifts.
-- The app also sets `pd.set_option("mode.string_storage", "python")` at startup, which sidesteps a class of pandas 3.x Arrow-backed-string crashes inside Streamlit's script-runner thread. Leave it in place.
+- **`pyarrow` must stay below 25** (pinned in `requirements.txt`). pyarrow 25.0.0 has a native bug that segfaults under Streamlit's dataframe serialization. Use `pip install "pyarrow==24.0.0"` if the local venv drifts.
+- The app sets `pd.set_option("mode.string_storage", "python")` at startup to sidestep pandas 3.x Arrow-backed-string crashes inside Streamlit. Leave it in place.
+- `streamlit-js-eval` provides the browser autosave. If it is missing the app still runs, with autosave disabled and a note in the sidebar.
+- Streamlit ≥ 1.37 is required for `st.fragment`.
+
+## Performance notes
+
+The app is structured to keep per-interaction cost low, which matters on small hosts (e.g. Streamlit Community Cloud's ~1 GB memory limit):
+
+- Full-year OBMS parquet files are held with `st.cache_resource` (one shared object, not a copy per rerun). Treat them as read-only.
+- Fiscal-year period/entity lists and per-entity row counts are cached by Drive file ID, so the big frames are not scanned on reruns.
+- `run_all_validations` and `generate_analysis_summary` are `st.cache_data`-cached on their inputs; they only rerun when data, entity, period, or a typed input changes.
+- The checklist is an `st.fragment`: ticking a box or typing a note reruns only the checklist, not the sidebar, validations, or dashboard. Inputs that feed validations (Step 47, enrollment) escalate to a full rerun when changed.
+- The cash report Excel is parsed once per uploaded file, and exports/pickles are built on demand.
 
 ## Deployment
 
 Deployed on Streamlit Community Cloud from this repo — any push to `main` redeploys automatically. Parquet files must be publicly shared (view access) on Google Drive. To add a new fiscal year, add its file IDs to `gdrive_manifest.json` in the OBMS Data Explorer repo (this app picks it up automatically) or to the local copy here.
+
+The app has no host-specific dependencies and runs unchanged on Hugging Face Spaces (Streamlit SDK). Autosave data is per-origin, so moving hosts starts with an empty autosave list.
 
 ## File Structure
 
@@ -69,8 +91,7 @@ SBB_Actuals_Analysis/
 
 ## Notes
 
-- Data files (CSVs, Excel reports) are excluded from the repo via `.gitignore`
-- Session progress can be saved/loaded as `.pkl` files from the sidebar
+- District data files (CSV/Excel), saved sessions (`.pkl`), and the local `venv/` are excluded from the repo via `.gitignore`
 - The Review Period (Q1 vs Q2–Q4) auto-sets from the OBMS pull's reporting period
 - Approved actuals become public record on New Mexico's Sunshine Portal (OpenBooks); the exported memo carries a standing notice
 - The checklist steps align with SBB's quarterly review procedures per NMAC 6.20.2
