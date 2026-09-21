@@ -546,8 +546,8 @@ def run_all_validations(cash_df, revenue_df, expenditure_df, entity_name, is_q1,
     """Pure function of its inputs (no st.* calls inside), so it is safe to
     cache. Streamlit hashes DataFrame args by CONTENT (pd.util.hash_pandas_object),
     so the cache only misses when the data, entity, period, or a typed-in
-    input (Step 6/7/47, enrollment) actually changes — not on checkbox clicks."""
-    """
+    input (Step 6/7/47, enrollment) actually changes — not on checkbox clicks.
+
     Returns:
         results: Dict[step, List[(status, msg)]] - text findings
         table_findings: Dict[step, dict] - structured table data for display
@@ -1539,8 +1539,8 @@ def run_all_validations(cash_df, revenue_df, expenditure_df, entity_name, is_q1,
 @st.cache_data(show_spinner=False, max_entries=8)
 def generate_analysis_summary(cash_df, revenue_df, expenditure_df, entity_name, is_q1, validation_results) -> Dict:
     """Cached for the same reason as run_all_validations. validation_results
-    is a dict of lists of tuples — hashable by cache_data."""
-    """Generate comprehensive analysis summary for memo export."""
+    is a dict of lists of tuples — hashable by cache_data.
+    Generate comprehensive analysis summary for memo export."""
     summary = {
         'entity': entity_name,
         'review_date': datetime.now().strftime("%B %d, %Y"),
@@ -3232,7 +3232,7 @@ if 'notes_by_step' not in st.session_state:
 
 if 'welcome_dismissed' not in st.session_state:
     st.session_state.welcome_dismissed = False
-# Bumping this nonce gives the Cash Report uploader a brand-new widget key,
+# Bumping this nonce gives the Cash Report (and Revenue/Expenditure) uploaders brand-new widget keys,
 # which is the only way to programmatically "clear" a file_uploader.
 if 'cash_uploader_nonce' not in st.session_state:
     st.session_state.cash_uploader_nonce = 0
@@ -3254,25 +3254,6 @@ def review_fingerprint() -> str:
     return hashlib.md5("|".join(parts).encode("utf-8")).hexdigest()
 
 
-def collect_session_for_save() -> Dict:
-    """Everything the .pkl needs to restore a review. Called only when the
-    user clicks Save, not on every rerun."""
-    ss = st.session_state
-    state = {
-        'checklist_data': ss.checklist_data,
-        'notes_by_step': ss.notes_by_step,
-        'cash_df': ss.cash_df,
-        'revenue_df': ss.revenue_df,
-        'expenditure_df': ss.expenditure_df,
-        'entity_name': ss.entity_name,
-        'obms_pulled_period': ss.get('obms_pulled_period'),
-        'obms_pulled_fy': ss.get('obms_pulled_fy'),
-    }
-    for k in USER_INPUT_KEYS:
-        state[k] = ss.get(k, 0.0)
-    return state
-
-
 def reset_review_progress(clear_data: bool = False):
     """Fresh checklist + notes + typed inputs for a new entity. Widget keys
     (c_N / n_N) are dropped so the checkboxes/notes re-seed from the fresh
@@ -3286,7 +3267,8 @@ def reset_review_progress(clear_data: bool = False):
     for k in list(ss.keys()):
         if k.startswith(("c_", "n_", "s6_", "s7_", "s47_")) or k in ("enroll_proj_input", "enroll_40d_input"):
             del ss[k]
-    for k in ("prepared_exports", "prepared_save", "last_autosave_sig", "last_loaded_file"):
+    for k in ("prepared_exports", "last_autosave_sig",
+              "_ls_write_js", "_ls_write_token", "_ls_write_slot"):
         ss.pop(k, None)
     if clear_data:
         ss.cash_df = None
@@ -3300,51 +3282,81 @@ def reset_review_progress(clear_data: bool = False):
         ss.cash_uploader_nonce += 1
 
 
-# ---------- AUTOSAVE (browser localStorage) ----------
-# The durable review state is small: which boxes are ticked, the notes,
-# the typed inputs, which entity/FY/period, and the (tiny) cash Summary
-# tab. Revenue/Expenditure are NOT stored — they're rebuilt from OBMS on
-# resume. Everything lives in the reviewer's browser, so it survives an
-# app crash, a refresh, or a redeploy, on any host.
+# ---------- SAVING: one snapshot format, two destinations ----------
+# A "review snapshot" is a small JSON-able dict: which boxes are ticked, the
+# notes, the typed inputs, entity/FY/period, and the (tiny) cash Summary tab.
+# The SAME snapshot is used for:
+#   1. Autosave  -> written to the browser's localStorage on every change.
+#   2. Save file -> the "Download save file" button above the checklist.
+# One format means one restore path, and the save file is cheap enough to
+# rebuild on every checklist rerun, so the button always holds what is on
+# screen (no "prepare" step, no stale bytes).
+#
+# Revenue/Expenditure pulled from OBMS are NOT stored — they're rebuilt from
+# OBMS on restore. When they came from *uploaded* files the save FILE carries
+# them too (autosave doesn't, to stay small in localStorage).
 AUTOSAVE_LS_KEY = "sbb_actuals_autosaves"
 AUTOSAVE_MAX_SLOTS = 12
-AUTOSAVE_VERSION = 1
+SNAPSHOT_VERSION = 2
+SAVE_FILE_KIND = "sbb_actuals_review"
 
 
 def autosave_slot_id(entity: str, fy: Optional[str], period: Optional[str]) -> str:
     return f"{entity}|{fy or ''}|{period or ''}"
 
 
-def build_autosave_payload() -> Dict:
+def current_slot_id() -> str:
     ss = st.session_state
-    cash_json = None
-    if ss.cash_df is not None:
-        cash_json = ss.cash_df.to_json(orient="split", date_format="iso")
-    payload = {
-        'v': AUTOSAVE_VERSION,
+    return autosave_slot_id(ss.entity_name, ss.get('obms_pulled_fy'), ss.get('obms_pulled_period'))
+
+
+def build_review_snapshot(include_reports: bool = False) -> Dict:
+    """Everything needed to restore the reviewer's work. include_reports adds
+    uploaded Revenue/Expenditure (only for the save file, only when they
+    didn't come from OBMS)."""
+    ss = st.session_state
+    source = 'obms' if ss.get('obms_pulled_period') else 'upload'
+    snap = {
+        'kind': SAVE_FILE_KIND,
+        'v': SNAPSHOT_VERSION,
         'saved_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
         'entity_name': ss.entity_name,
         'obms_fy': ss.get('obms_pulled_fy'),
         'obms_period': ss.get('obms_pulled_period'),
-        'source': 'obms' if ss.get('obms_pulled_period') else 'upload',
+        'source': source,
         'completed': {str(i['step']): bool(i['completed']) for i in ss.checklist_data},
         'notes': {str(k): v for k, v in ss.notes_by_step.items() if v},
         'inputs': {k: float(ss.get(k, 0.0) or 0.0) for k in USER_INPUT_KEYS},
-        'cash_json': cash_json,
+        'cash_json': (ss.cash_df.to_json(orient="split", date_format="iso")
+                      if ss.cash_df is not None else None),
         'cash_file_name': ss.get('cash_file_name', ''),
     }
-    return payload
+    if include_reports and source == 'upload':
+        for key, df in (('revenue_json', ss.revenue_df), ('expenditure_json', ss.expenditure_df)):
+            if df is not None:
+                snap[key] = df.to_json(orient="split", date_format="iso")
+    return snap
 
 
-def apply_autosave_payload(p: Dict) -> List[str]:
-    """Restore a payload into session_state. Returns a list of warnings
-    (e.g. revenue/expenditure could not be rebuilt)."""
+def snapshot_progress(p: Dict) -> Tuple:
+    """The part of a snapshot that represents the reviewer's WORK (not the
+    data, not the timestamp). Two snapshots with equal progress are the
+    same review state."""
+    done = tuple(sorted(k for k, v in p.get('completed', {}).items() if v))
+    notes = tuple(sorted((k, v) for k, v in p.get('notes', {}).items() if v))
+    inputs = tuple(sorted((k, float(v or 0.0)) for k, v in p.get('inputs', {}).items() if v))
+    return done, notes, inputs
+
+
+def snapshot_done_count(p: Dict) -> int:
+    return sum(1 for v in p.get('completed', {}).values() if v)
+
+
+def apply_progress(p: Dict):
+    """Put a snapshot's ticks/notes/inputs into the live review without
+    touching the loaded data. Drops the widget keys so checkboxes, notes and
+    number inputs re-seed from the restored values on the next render."""
     ss = st.session_state
-    warnings_ = []
-    reset_review_progress(clear_data=True)
-    ss.entity_name = p.get('entity_name', '')
-    ss['obms_pulled_fy'] = p.get('obms_fy')
-    ss['obms_pulled_period'] = p.get('obms_period')
     completed = p.get('completed', {})
     notes = p.get('notes', {})
     for item in ss.checklist_data:
@@ -3352,17 +3364,36 @@ def apply_autosave_payload(p: Dict) -> List[str]:
         item['completed'] = bool(completed.get(sid, False))
         item['user_notes'] = notes.get(sid, "")
         ss.notes_by_step[item['step']] = item['user_notes']
-    for k, v in p.get('inputs', {}).items():
-        if k in USER_INPUT_KEYS:
-            ss[k] = float(v)
+    for k in USER_INPUT_KEYS:
+        ss[k] = float(p.get('inputs', {}).get(k, 0.0) or 0.0)
+    for k in list(ss.keys()):
+        if k.startswith(("c_", "n_", "s6_", "s7_", "s47_")) or k in ("enroll_proj_input", "enroll_40d_input"):
+            del ss[k]
+
+
+def restore_review(p: Dict, claim: bool = True) -> List[str]:
+    """Full restore from a snapshot (autosave slot or save file): clears the
+    current review, restores progress + cash report, and rebuilds
+    Revenue/Expenditure (from OBMS, or from the file if it carried them).
+    Returns warnings to show the user."""
+    ss = st.session_state
+    warnings_ = []
+    reset_review_progress(clear_data=True)
+    ss.entity_name = p.get('entity_name', '')
+    ss['obms_pulled_fy'] = p.get('obms_fy')
+    ss['obms_pulled_period'] = p.get('obms_period')
+    apply_progress(p)
+
+    def _df(js):
+        return pd.read_json(StringIO(js), orient="split", dtype=False, convert_dates=False)
+
     if p.get('cash_json'):
         try:
-            ss.cash_df = pd.read_json(StringIO(p['cash_json']), orient="split",
-                                      dtype=False, convert_dates=False)
+            ss.cash_df = _df(p['cash_json'])
             ss['cash_file_name'] = p.get('cash_file_name', '')
         except Exception as e:
             warnings_.append(f"Cash report could not be restored: {e}")
-    # Rebuild Revenue/Expenditure from OBMS
+
     fy, period, entity = p.get('obms_fy'), p.get('obms_period'), p.get('entity_name')
     if p.get('source') == 'obms' and fy and period and entity:
         registry = load_obms_registry()
@@ -3371,73 +3402,185 @@ def apply_autosave_payload(p: Dict) -> List[str]:
         act_p = act[(act["Reporting Period"] == period) & (act["Budget Entity"] == entity)] if not act.empty else act
         if act_p.empty:
             warnings_.append("OBMS returned no rows for the saved entity/period — "
-                             "Revenue/Expenditure were not restored.")
+                             "Revenue/Expenditure were not restored. Your checklist "
+                             "progress and notes were.")
         else:
             ss.expenditure_df = build_obms_actuals_report(act_p, bud, entity, "E")
             ss.revenue_df = build_obms_actuals_report(act_p, bud, entity, "R")
-            # Point the sidebar selectors at the restored selection
-            ss['obms_fy'] = fy
+            ss['obms_fy'] = fy          # point the sidebar selectors at it
             ss['obms_period'] = period
             ss['obms_entity'] = entity
     elif p.get('source') == 'upload':
-        warnings_.append("This review used uploaded Revenue/Expenditure files — "
-                         "re-upload them to restore the automated checks.")
+        try:
+            if p.get('revenue_json'):
+                ss.revenue_df = _df(p['revenue_json'])
+            if p.get('expenditure_json'):
+                ss.expenditure_df = _df(p['expenditure_json'])
+        except Exception as e:
+            warnings_.append(f"Revenue/Expenditure could not be restored: {e}")
+        if not (p.get('revenue_json') or p.get('expenditure_json')):
+            warnings_.append("This review used uploaded Revenue/Expenditure files — "
+                             "re-upload them to restore the automated checks.")
+    # claim=True (resumed FROM autosave): the slot and the screen now match,
+    # so autosave may keep writing it. claim=False (restored from a file):
+    # leave it unclaimed, so if the browser holds a different (maybe newer)
+    # autosave of this review, the reviewer is asked which one to keep.
+    if claim:
+        ss.setdefault('autosave_claimed', set()).add(current_slot_id())
+    ss.pop('last_autosave_sig', None)
     return warnings_
 
 
+def snapshot_from_legacy_pickle(data: Dict) -> Dict:
+    """Old .pkl save files -> snapshot, so they restore through the same
+    path. (The DataFrames inside are used directly.)"""
+    cl = data.get('checklist_data', []) or []
+    notes = data.get('notes_by_step', {}) or {}
+    snap = {
+        'kind': SAVE_FILE_KIND, 'v': 1,
+        'entity_name': data.get('entity_name', ''),
+        'obms_fy': data.get('obms_pulled_fy'),
+        'obms_period': data.get('obms_pulled_period'),
+        'source': 'legacy_pkl',
+        'completed': {str(i['step']): bool(i.get('completed')) for i in cl},
+        'notes': {str(k): v for k, v in notes.items() if v},
+        'inputs': {k: float(data.get(k, 0.0) or 0.0) for k in USER_INPUT_KEYS},
+    }
+    return snap
+
+
+# ---------- AUTOSAVE (browser localStorage) ----------
+# Mechanics: streamlit_js_eval renders a hidden iframe that eval()s a JS
+# expression and (optionally) posts the result back to Python, which
+# triggers a rerun. It only re-evaluates when the expression string changes.
+#
+# READ once per session. getItem() returns null for a browser that has never
+# saved; js_eval hands that to Python as None — indistinguishable from "not
+# reported yet". The old code waited on None forever, so autosave never
+# started. `|| "{}"` makes an empty browser answer "{}" instead.
+_LS_READ_JS = (
+    "(() => { try { return localStorage.getItem('%s') || '{}'; }"
+    " catch (e) { return 'ERR:' + e; } })()" % AUTOSAVE_LS_KEY
+)
+# WRITE is a read-modify-write of ONE slot inside the browser, so two tabs
+# reviewing different schools can't overwrite each other's slots. It returns
+# a token, which Python compares to confirm the write actually happened.
+_LS_UPSERT_JS = """(() => { try {
+  const K = '%s', MAX = %d;
+  const all = JSON.parse(localStorage.getItem(K) || '{}');
+  all[%s] = %s;
+  const ids = Object.keys(all).sort((a, b) => (all[b].saved_at || '').localeCompare(all[a].saved_at || ''));
+  ids.slice(MAX).forEach(id => delete all[id]);
+  localStorage.setItem(K, JSON.stringify(all));
+  return %s;
+} catch (e) { return 'ERR:' + e; } })()"""
+_LS_DELETE_JS = """(() => { try {
+  const K = '%s';
+  const all = JSON.parse(localStorage.getItem(K) || '{}');
+  delete all[%s];
+  localStorage.setItem(K, JSON.stringify(all));
+  return 'deleted';
+} catch (e) { return 'ERR:' + e; } })() /* %s */"""
+AUTOSAVE_READ_GIVE_UP = 4   # reruns to wait for the browser before warning
+
+
 def autosave_read_from_browser():
-    """Emit the reader component once per session. streamlit_js_eval
-    returns None on the very first render (the iframe hasn't reported
-    back yet), then the stored string on the rerun it triggers. We only
-    consume it the first time it's non-None so in-memory writes made
-    later in the session aren't clobbered by the stale initial read."""
-    if not HAS_JS_EVAL or 'autosave_slots' in st.session_state:
+    """Load the saved slots once per session (sidebar)."""
+    ss = st.session_state
+    if not HAS_JS_EVAL or 'autosave_slots' in ss:
         return
-    raw = _js_eval(js_expressions=f"localStorage.getItem('{AUTOSAVE_LS_KEY}')",
-                   key="ls_read_autosaves")
-    if raw is None:
-        return  # not reported yet; try again next rerun
+    raw = _js_eval(js_expressions=_LS_READ_JS, key="ls_read_autosaves")
+    if raw is None:  # iframe hasn't answered yet — it will trigger a rerun
+        ss['_ls_read_attempts'] = ss.get('_ls_read_attempts', 0) + 1
+        return
+    if isinstance(raw, str) and raw.startswith('ERR:'):
+        ss['autosave_error'] = raw[4:].strip()
+        ss.autosave_slots = {}
+        return
     try:
         slots = json.loads(raw) if raw else {}
-        st.session_state.autosave_slots = slots if isinstance(slots, dict) else {}
+        ss.autosave_slots = slots if isinstance(slots, dict) else {}
     except Exception:
-        st.session_state.autosave_slots = {}
+        ss.autosave_slots = {}
 
 
-def autosave_write_to_browser(slots: Dict, nonce: str):
-    """Emit a writer component. The JS expression includes the JSON body
-    and a nonce, so it differs every time and the iframe re-evaluates it.
-    want_output=False keeps the write from posting a value back (which
-    would otherwise schedule a pointless rerun)."""
+def autosave_status() -> str:
+    """'off' | 'waiting' | 'broken' | 'ready'."""
+    ss = st.session_state
     if not HAS_JS_EVAL:
-        return
-    body = json.dumps(json.dumps(slots))  # JS string literal of the JSON
-    _js_eval(js_expressions=f"localStorage.setItem('{AUTOSAVE_LS_KEY}', {body}); /*{nonce}*/",
-             key="ls_write_autosaves", want_output=False)
+        return 'off'
+    if ss.get('autosave_error'):
+        return 'broken'
+    if 'autosave_slots' not in ss:
+        return 'broken' if ss.get('_ls_read_attempts', 0) >= AUTOSAVE_READ_GIVE_UP else 'waiting'
+    return 'ready'
+
+
+def autosave_conflict() -> Optional[Dict]:
+    """If this browser already holds an autosave for the review that's loaded,
+    and it differs from what's on screen, return it. Until the reviewer
+    chooses, autosave must NOT write — writing would overwrite that copy
+    (e.g. re-pulling a school after a refresh would wipe its saved ticks)."""
+    ss = st.session_state
+    sid = current_slot_id()
+    if sid in ss.get('autosave_claimed', set()):
+        return None
+    existing = ss.get('autosave_slots', {}).get(sid)
+    if not existing:
+        ss.setdefault('autosave_claimed', set()).add(sid)
+        return None
+    if snapshot_progress(existing) == snapshot_progress(build_review_snapshot()):
+        ss.setdefault('autosave_claimed', set()).add(sid)
+        return None
+    return existing
 
 
 def autosave_current_review():
-    """Called at the end of the checklist fragment. Writes only when the
-    review fingerprint changed since the last write — a checkbox click
-    that changes nothing costs nothing."""
+    """Called at the end of every checklist render. Builds a new snapshot only
+    when the review changed; always renders the writer so its confirmation
+    token comes back to Python."""
     ss = st.session_state
-    if not HAS_JS_EVAL or not ss.entity_name or 'autosave_slots' not in ss:
+    if autosave_status() != 'ready' or not ss.entity_name:
+        return
+    if autosave_conflict() is not None:
         return
     sig = review_fingerprint()
-    if sig == ss.get('last_autosave_sig'):
-        return
-    payload = build_autosave_payload()
-    sid = autosave_slot_id(payload['entity_name'], payload['obms_fy'], payload['obms_period'])
-    slots = dict(ss.autosave_slots)
-    slots[sid] = payload
-    if len(slots) > AUTOSAVE_MAX_SLOTS:  # drop the oldest
-        oldest = sorted(slots, key=lambda k: slots[k].get('saved_at', ''))[:len(slots) - AUTOSAVE_MAX_SLOTS]
-        for k in oldest:
-            slots.pop(k, None)
-    ss.autosave_slots = slots
-    ss.last_autosave_sig = sig
-    ss.last_autosave_at = payload['saved_at']
-    autosave_write_to_browser(slots, nonce=payload['saved_at'] + sig[:6])
+    if sig != ss.get('last_autosave_sig'):
+        payload = build_review_snapshot()
+        sid = current_slot_id()
+        token = f"{payload['saved_at']}|{sig[:8]}"
+        ss['_ls_write_js'] = _LS_UPSERT_JS % (
+            AUTOSAVE_LS_KEY, AUTOSAVE_MAX_SLOTS,
+            json.dumps(sid), json.dumps(payload), json.dumps(token))
+        ss['_ls_write_token'] = token
+        ss['_ls_write_slot'] = sid
+        ss.autosave_slots = {**ss.autosave_slots, sid: payload}  # keep the Resume list current
+        ss.last_autosave_sig = sig
+        ss.last_autosave_at = payload['saved_at']
+    if ss.get('_ls_write_js'):
+        ret = _js_eval(js_expressions=ss['_ls_write_js'], key="ls_write_autosave")
+        if isinstance(ret, str) and ret.startswith('ERR:'):
+            ss['autosave_error'] = ret[4:].strip()
+        elif ret is not None:
+            ss['_ls_confirmed_token'] = ret
+
+
+def autosave_delete_slot(sid: str):
+    """Sidebar Delete. Queues a one-shot delete that the sidebar renders on
+    the next run (rendering it and then calling st.rerun() in the same run
+    would discard it before the browser ever saw it)."""
+    ss = st.session_state
+    ss.autosave_slots = {k: v for k, v in ss.get('autosave_slots', {}).items() if k != sid}
+    ss['_ls_pending_delete'] = sid
+
+
+def autosave_flush_pending_delete():
+    ss = st.session_state
+    sid = ss.pop('_ls_pending_delete', None)
+    if sid and HAS_JS_EVAL:
+        _js_eval(js_expressions=_LS_DELETE_JS % (AUTOSAVE_LS_KEY, json.dumps(sid),
+                                                 datetime.now().isoformat()),
+                 key="ls_delete_autosave", want_output=False)
 
 
 def set_step_completed(step_id: int):
@@ -3568,11 +3711,13 @@ def render_welcome_modal():
         st.markdown("---")
         st.markdown("**Saving Your Progress**")
         st.markdown(
-            "Your work isn't lost if you close the browser. Use "
-            "**\"Save Your Progress\"** in the sidebar to download a session "
-            "file. To pick up where you left off, use **\"Resume a Previous "
-            "Review\"** and upload that file. It restores your uploaded data, "
-            "checklist progress, and all notes."
+            "**Autosave** keeps every tick, note and input in this browser as "
+            "you work — the bar above the checklist shows **✓ autosaved** with "
+            "the time. After a refresh or crash, pick the review under "
+            "**Autosaved reviews in this browser** in the sidebar.\n\n"
+            "Want a file too? **Download save file** (next to the progress bar) "
+            "always saves exactly what's on screen, as a new timestamped file "
+            "each time. Restore it with **Resume from a save file**."
         )
 
         col_l, col_r = st.columns(2)
@@ -3588,17 +3733,115 @@ def render_welcome_modal():
 
 # ---------- MAIN APP ----------
 
+def keyed_number_input(container, label: str, key: str, seed: float, **kw) -> float:
+    """number_input driven by its session_state key (like the checkboxes).
+    Passing value= AND key= lets the browser's last-shown number win after a
+    restore (it re-sends 0.00 and overwrites the restored value). Seeding the
+    key once — and dropping it on restore so it re-seeds — makes the saved
+    value stick."""
+    if key not in st.session_state:
+        st.session_state[key] = float(seed or 0.0)
+    return container.number_input(label, key=key, **kw)
+
+
+def render_save_bar(done: int, total: int):
+    """Progress count, autosave status, and the one-click save file.
+    The download holds a snapshot built on THIS render, and every change to
+    the review reruns this fragment, so the file always matches the screen.
+    (Exception: a note you're still typing isn't applied until you click
+    out of the box or press Ctrl+Enter.)"""
+    ss = st.session_state
+    c1, c2 = st.columns([3, 2], vertical_alignment="center")
+    status = autosave_status()
+    if status == 'ready' and not ss.entity_name:
+        msg = "autosave starts once the review has an entity name"
+    elif status == 'ready' and autosave_conflict() is not None:
+        msg = "⏸ autosave paused — choose a version below"
+    elif status == 'ready' and ss.get('_ls_write_token'):
+        at = ss.get('last_autosave_at', '').split(' ')[-1]
+        msg = (f"✓ autosaved {at}" if ss.get('_ls_confirmed_token') == ss['_ls_write_token']
+               else "autosaving…")
+    elif status == 'ready':
+        msg = "autosave on"
+    elif status == 'waiting':
+        msg = "autosave connecting…"
+    elif status == 'broken':
+        msg = "⚠ autosave NOT working in this browser — use Download save file"
+    else:
+        msg = "autosave off (streamlit-js-eval missing) — use Download save file"
+    c1.caption(f"**Progress: {done}/{total}** · {msg}")
+    if status == 'broken' and ss.get('autosave_error'):
+        c1.caption(f"Browser said: {ss['autosave_error']}")
+
+    snap = build_review_snapshot(include_reports=True)
+    slug = re.sub(r"[^A-Za-z0-9]+", "_", ss.entity_name or "Review").strip("_")
+    parts = [slug, ss.get('obms_pulled_fy') or "", ss.get('obms_pulled_period') or "",
+             datetime.now().strftime('%Y%m%d-%H%M%S')]
+    c2.download_button(
+        "Download save file",
+        data=json.dumps(snap, indent=1).encode("utf-8"),
+        file_name="Review_" + "_".join(x for x in parts if x) + ".json",
+        mime="application/json",
+        on_click="ignore",          # downloading never reruns the app
+        icon=":material/download:",
+        width="stretch",
+        key="dl_save_file",
+        help="Saves everything on screen right now: ticks, notes and typed "
+             "inputs. Each download is a separate, timestamped file. "
+             "Restore it with Resume from a save file in the sidebar.",
+    )
+
+
+def render_autosave_conflict():
+    """Shown when this browser already has an autosave of the loaded review
+    that differs from what's on screen. Autosave is paused until the
+    reviewer picks one, so neither copy is overwritten by accident."""
+    existing = autosave_conflict() if autosave_status() == 'ready' else None
+    if existing is None:
+        return
+    ss = st.session_state
+    cur = build_review_snapshot()
+    st.warning(
+        f"**This browser has an autosave of this review from "
+        f"{existing.get('saved_at', '?')}** with "
+        f"**{snapshot_done_count(existing)} steps done** and "
+        f"{len(existing.get('notes', {}))} notes. What's on screen now has "
+        f"{snapshot_done_count(cur)} done and {len(cur.get('notes', {}))} notes. "
+        f"Autosave is paused until you choose — nothing has been overwritten."
+    )
+    b1, b2 = st.columns(2)
+    if b1.button("Use the autosave", type="primary", width="stretch", key="conflict_use_autosave"):
+        apply_progress(existing)
+        ss.setdefault('autosave_claimed', set()).add(current_slot_id())
+        ss.pop('last_autosave_sig', None)
+        st.rerun(scope="app")
+    if b2.button("Keep what's on screen (replace the autosave)", width="stretch",
+                 key="conflict_keep_screen"):
+        ss.setdefault('autosave_claimed', set()).add(current_slot_id())
+        ss.pop('last_autosave_sig', None)
+        st.rerun(scope="fragment")
+
+
 @st.fragment
 def render_checklist(user_inputs: Dict):
     """The interactive checklist, isolated as a fragment: ticking a box or
     typing a note reruns ONLY this function — not the sidebar, not the
     validations, not the dashboard. The progress bar and filters live in
     here too so they update on fragment reruns."""
-    # Progress (sticky via the CSS in main)
+    # Progress + save bar (sticky via the CSS in main). Lives INSIDE the
+    # fragment on purpose: a checkbox click reruns only this function, so
+    # anything outside it (e.g. the sidebar) would show stale save state.
     total = len(st.session_state.checklist_data)
     done = sum(1 for i in st.session_state.checklist_data if i['completed'])
-    st.progress(done / total if total > 0 else 0)
-    st.caption(f"Progress: {done}/{total}")
+    with st.container():
+        st.progress(done / total if total > 0 else 0)
+        # Autosave BEFORE drawing the status, so the status describes this
+        # run's save, not the previous one. (Checkbox/note callbacks have
+        # already run by now, so the state is final for this render.)
+        autosave_current_review()
+        render_save_bar(done, total)
+
+    render_autosave_conflict()
 
     # Filters
     c1, c2 = st.columns([3, 1])
@@ -3626,22 +3869,22 @@ def render_checklist(user_inputs: Dict):
                 if step_id == 6:
                     st.markdown(f"[Open June SEG File]({SEG_EXTERNAL_LINK})")
                     c1, c2 = st.columns(2)
-                    _v1 = c1.number_input("SEG Actual Period", value=user_inputs['step_6_period'], key="s6_p")
-                    _v2 = c2.number_input("SEG Actual YTD", value=user_inputs['step_6_ytd'], key="s6_y")
+                    _v1 = keyed_number_input(c1, "SEG Actual Period", "s6_p", user_inputs['step_6_period'])
+                    _v2 = keyed_number_input(c2, "SEG Actual YTD", "s6_y", user_inputs['step_6_ytd'])
                     if (_v1, _v2) != (user_inputs['step_6_period'], user_inputs['step_6_ytd']):
                         st.session_state['step_6_period'], st.session_state['step_6_ytd'] = _v1, _v2
                         st.rerun(scope="app")
 
                 elif step_id == 7:
-                    _v = st.number_input("SEG Budgeted", value=user_inputs['step_7_budget'], key="s7_b")
+                    _v = keyed_number_input(st, "SEG Budgeted", "s7_b", user_inputs['step_7_budget'])
                     if _v != user_inputs['step_7_budget']:
                         st.session_state['step_7_budget'] = _v
                         st.rerun(scope="app")
 
                 elif step_id == 47:
                     c1, c2 = st.columns(2)
-                    _v1 = c1.number_input("Cash Balance Last Year", value=user_inputs['step_47_last_year'], key="s47_l")
-                    _v2 = c2.number_input("Cash Balance This Year", value=user_inputs['step_47_this_year'], key="s47_t")
+                    _v1 = keyed_number_input(c1, "Cash Balance Last Year", "s47_l", user_inputs['step_47_last_year'])
+                    _v2 = keyed_number_input(c2, "Cash Balance This Year", "s47_t", user_inputs['step_47_this_year'])
                     if (_v1, _v2) != (user_inputs['step_47_last_year'], user_inputs['step_47_this_year']):
                         st.session_state['step_47_last_year'], st.session_state['step_47_this_year'] = _v1, _v2
                         st.rerun(scope="app")
@@ -3722,8 +3965,6 @@ def render_checklist(user_inputs: Dict):
                 st.session_state.notes_by_step[step_id] = notes
                 st.session_state.checklist_data[idx]['user_notes'] = notes
 
-    # Persist to the browser if anything changed
-    autosave_current_review()
 
 
 def main():
@@ -3736,6 +3977,10 @@ def main():
     st.markdown(
         """
         <style>
+            /* Autosave's hidden JS-eval frames: keep them running, take no space */
+            div[data-testid="stElementContainer"]:has(iframe[title*="streamlit_js_eval"]) {
+                display: none;
+            }
             div[data-testid="stVerticalBlock"] > div:has(div[data-testid="stProgress"]) {
                 position: sticky;
                 top: 2.875rem;
@@ -3895,7 +4140,7 @@ def main():
                     "→ Actuals tab → Revenue download."
                 )
                 rev_file = st.file_uploader("Revenue Report", type=['csv', 'xlsx'],
-                                            key='rev', label_visibility="collapsed")
+                                            key=f"rev_{st.session_state.cash_uploader_nonce}", label_visibility="collapsed")
                 st.markdown("---")
 
                 st.markdown("**Expenditure Actuals Report**")
@@ -3905,7 +4150,7 @@ def main():
                     "→ Actuals tab → Expenditure download."
                 )
                 exp_file = st.file_uploader("Expenditure Report", type=['csv', 'xlsx'],
-                                            key='exp', label_visibility="collapsed")
+                                            key=f"exp_{st.session_state.cash_uploader_nonce}", label_visibility="collapsed")
 
             # Parse the Excel only when a NEW file arrives — the uploader
             # keeps returning the same object on every rerun, and openpyxl
@@ -3933,47 +4178,54 @@ def main():
             st.divider()
 
             st.header("3. Save / Resume Progress")
-            for _w in st.session_state.pop('_flash', []):
-                st.warning(_w)
+            for _i, _w in enumerate(st.session_state.pop('_flash', [])):
+                (st.success if _i == 0 and _w.startswith("Restored") else st.warning)(_w)
 
             # --- Autosave (browser) ---
             autosave_read_from_browser()
-            if HAS_JS_EVAL:
-                _at = st.session_state.get('last_autosave_at')
-                st.caption("**Autosave:** " + (f"last saved {_at.split(' ')[-1]}" if _at else
-                           "on — saves to this browser as you work."))
-                _slots = st.session_state.get('autosave_slots', {})
-                _cur = autosave_slot_id(st.session_state.entity_name,
-                                        st.session_state.get('obms_pulled_fy'),
-                                        st.session_state.get('obms_pulled_period'))
-                _resumable = {k: v for k, v in _slots.items() if k != _cur and v.get('entity_name')}
-                if _resumable:
-                    _order = sorted(_resumable, key=lambda k: _resumable[k].get('saved_at', ''), reverse=True)
-                    def _slot_label(k):
-                        v = _resumable[k]
-                        done_n = sum(1 for x in v.get('completed', {}).values() if x)
-                        fy = v.get('obms_fy') or ''
-                        fy_lbl = f"FY{2000 + int(fy[:2])}–{fy[2:]} " if len(fy) == 4 and fy.isdigit() else ""
-                        return f"{v['entity_name']} · {fy_lbl}{v.get('obms_period') or ''} · {done_n} done · {v.get('saved_at', '')[5:16]}"
-                    _pick = st.selectbox("Autosaved reviews in this browser", _order,
-                                         format_func=_slot_label, key="autosave_pick")
-                    rc1, rc2 = st.columns(2)
-                    if rc1.button("Resume", width="stretch", key="autosave_resume"):
-                        with st.spinner("Restoring review…"):
-                            _warns = apply_autosave_payload(_resumable[_pick])
-                        # st.rerun() wipes anything drawn this run, so park
-                        # the warnings and show them on the next run.
-                        st.session_state['_flash'] = _warns
-                        st.session_state.pop('last_autosave_sig', None)
-                        st.rerun()
-                    if rc2.button("Delete", width="stretch", key="autosave_delete",
-                                  help="Removes this autosave from the browser."):
-                        _slots = dict(_slots); _slots.pop(_pick, None)
-                        st.session_state.autosave_slots = _slots
-                        autosave_write_to_browser(_slots, nonce=datetime.now().isoformat())
-                        st.rerun()
+            autosave_flush_pending_delete()
+            _status = autosave_status()
+            if _status == 'ready':
+                st.caption("**Autosave is on.** Every tick, note and input is saved "
+                           "to this browser as you work. Status shows above the checklist.")
+            elif _status == 'waiting':
+                st.caption("Autosave: connecting to this browser…")
+            elif _status == 'broken':
+                st.error("**Autosave isn't working in this browser.** Use "
+                         "*Download save file* above the checklist to keep your work."
+                         + (f"\n\nBrowser said: {st.session_state['autosave_error']}"
+                            if st.session_state.get('autosave_error') else ""))
             else:
-                st.caption("Autosave unavailable — `pip install streamlit-js-eval`.")
+                st.caption("Autosave unavailable — `pip install streamlit-js-eval`. "
+                           "Use *Download save file* above the checklist.")
+
+            _slots = st.session_state.get('autosave_slots', {})
+            _cur = current_slot_id()
+            _resumable = {k: v for k, v in _slots.items() if k != _cur and v.get('entity_name')}
+            if _resumable:
+                _order = sorted(_resumable, key=lambda k: _resumable[k].get('saved_at', ''), reverse=True)
+                def _slot_label(k):
+                    v = _resumable[k]
+                    fy = v.get('obms_fy') or ''
+                    fy_lbl = f"FY{2000 + int(fy[:2])}–{fy[2:]} " if len(fy) == 4 and fy.isdigit() else ""
+                    return (f"{v['entity_name']} · {fy_lbl}{v.get('obms_period') or ''} · "
+                            f"{snapshot_done_count(v)} done · {v.get('saved_at', '')[5:16]}")
+                _pick = st.selectbox("Autosaved reviews in this browser", _order,
+                                     format_func=_slot_label, key="autosave_pick")
+                _pv = _resumable[_pick]
+                st.caption(f"**{snapshot_done_count(_pv)} steps done** · "
+                           f"{len(_pv.get('notes', {}))} notes · saved {_pv.get('saved_at', '?')}")
+                rc1, rc2 = st.columns(2)
+                if rc1.button("Resume", width="stretch", key="autosave_resume"):
+                    with st.spinner("Restoring review…"):
+                        _warns = restore_review(_resumable[_pick], claim=True)
+                    # st.rerun() wipes anything drawn this run, so park
+                    # the warnings and show them on the next run.
+                    st.session_state['_flash'] = _warns
+                    st.rerun()
+                rc2.button("Delete", width="stretch", key="autosave_delete",
+                           on_click=autosave_delete_slot, args=(_pick,),
+                           help="Removes this autosave from the browser.")
 
             if st.button("Start a new review", width="stretch",
                          help="Clears the loaded data, checklist and notes. "
@@ -3982,72 +4234,43 @@ def main():
                 st.rerun()
 
             st.markdown("")
-            st.markdown("**Portable save file**")
-            st.caption(
-                "Autosave lives in this browser only. For a file you can move "
-                "between machines or attach to a folder, prepare and download a "
-                "progress file."
-            )
-
-            # Two-click save: "Prepare" pickles the session (this used to
-            # happen on EVERY rerun, serializing three DataFrames each time
-            # a checkbox was ticked); "Download" then serves the bytes.
-            entity_slug = (st.session_state.entity_name.replace(' ', '_')
-                           if st.session_state.entity_name else "Review")
-            if st.button("Prepare save file", width="stretch"):
-                buffer = BytesIO()
-                pickle.dump(collect_session_for_save(), buffer)
-                st.session_state.prepared_save = {
-                    'bytes': buffer.getvalue(),
-                    'sig': review_fingerprint(),
-                    'at': datetime.now().strftime('%H:%M:%S'),
-                }
-            _ps = st.session_state.get('prepared_save')
-            if _ps:
-                _stale = _ps['sig'] != review_fingerprint()
-                st.download_button(
-                    label=("Download Progress (changed since prepared)"
-                           if _stale else f"Download Progress ({_ps['at']})"),
-                    data=_ps['bytes'],
-                    file_name=f"Review_{entity_slug}_{datetime.now().strftime('%Y%m%d')}.pkl",
-                    mime="application/octet-stream",
-                    width="stretch",
-                    type="secondary" if _stale else "primary",
-                    help="Downloads a file that stores your entire review session."
-                )
-
-            st.markdown("")
-            st.markdown("**Resume a Previous Review**")
-            st.caption("Upload a previously saved progress file to continue where you left off.")
-            uploaded_session = st.file_uploader("Resume session", type=["pkl"],
-                                               label_visibility="collapsed")
+            st.markdown("**Resume from a save file**")
+            st.caption("Upload a save file (.json) from *Download save file*. "
+                       "Older .pkl progress files work too.")
+            uploaded_session = st.file_uploader("Resume session", type=["json", "pkl"],
+                                               label_visibility="collapsed",
+                                               key="resume_uploader")
 
             if uploaded_session is not None:
-                if ('last_loaded_file' not in st.session_state
-                        or st.session_state.last_loaded_file != uploaded_session.name):
+                # file_id is unique per upload, so re-uploading the same file
+                # (e.g. after "Start a new review") loads it again.
+                _tag = getattr(uploaded_session, "file_id", None) or \
+                    (uploaded_session.name, uploaded_session.size)
+                if st.session_state.get('last_loaded_file') != _tag:
+                    st.session_state.last_loaded_file = _tag
                     try:
-                        data = pickle.load(uploaded_session)
-                        st.session_state.checklist_data = data.get('checklist_data', [])
-                        st.session_state.notes_by_step = data.get('notes_by_step', {})
-                        st.session_state.cash_df = data.get('cash_df')
-                        st.session_state.revenue_df = data.get('revenue_df')
-                        st.session_state.expenditure_df = data.get('expenditure_df')
-                        st.session_state.entity_name = data.get('entity_name', "")
-                        st.session_state['obms_pulled_fy'] = data.get('obms_pulled_fy')
-                        # Drop stale widget keys so checkboxes/notes re-seed
-                        for _k in [k for k in st.session_state if k.startswith(("c_", "n_"))]:
-                            del st.session_state[_k]
-                        for _k in USER_INPUT_KEYS:
-                            st.session_state[_k] = data.get(_k, 0.0)
-                        st.session_state['obms_pulled_period'] = data.get('obms_pulled_period')
-                        # Old prepared exports/saves belong to the previous review
-                        st.session_state.pop('prepared_exports', None)
-                        st.session_state.pop('prepared_save', None)
-                        st.session_state.last_loaded_file = uploaded_session.name
-                        st.success("Session restored! Your data and notes are loaded.")
+                        if uploaded_session.name.lower().endswith(".pkl"):
+                            # Legacy format. Unpickling runs code from the
+                            # file, so only load .pkl files you saved yourself.
+                            data = pickle.load(uploaded_session)
+                            snap = snapshot_from_legacy_pickle(data)
+                            _warns = restore_review(snap, claim=False)
+                            st.session_state.cash_df = data.get('cash_df')
+                            st.session_state.revenue_df = data.get('revenue_df')
+                            st.session_state.expenditure_df = data.get('expenditure_df')
+                        else:
+                            snap = json.loads(uploaded_session.getvalue().decode("utf-8"))
+                            if not isinstance(snap, dict) or snap.get('kind') != SAVE_FILE_KIND:
+                                raise ValueError("this isn't an Actuals Analysis save file")
+                            with st.spinner("Restoring review…"):
+                                _warns = restore_review(snap, claim=False)
+                        st.session_state['_flash'] = (
+                            [f"Restored {snap.get('entity_name', '')} — "
+                             f"{snapshot_done_count(snap)} steps done "
+                             f"(saved {snap.get('saved_at', 'earlier')})."] + _warns)
                         st.rerun()
                     except Exception as e:
-                        st.error(f"Error loading session: {e}")
+                        st.error(f"Error loading save file: {e}")
 
         else:
             st.header("Batch Portfolio Scan")
@@ -4187,14 +4410,12 @@ def main():
                 "adjustment and can create a cash flow crunch."
             )
             ec1, ec2 = st.columns(2)
-            st.session_state['enroll_projected'] = ec1.number_input(
-                "Projected Membership (MEM)",
-                value=st.session_state.get('enroll_projected', 0.0),
-                min_value=0.0, step=1.0, key="enroll_proj_input")
-            st.session_state['enroll_40day'] = ec2.number_input(
-                "40-Day Actual Count (MEM)",
-                value=st.session_state.get('enroll_40day', 0.0),
-                min_value=0.0, step=1.0, key="enroll_40d_input")
+            st.session_state['enroll_projected'] = keyed_number_input(
+                ec1, "Projected Membership (MEM)", "enroll_proj_input",
+                st.session_state.get('enroll_projected', 0.0), min_value=0.0, step=1.0)
+            st.session_state['enroll_40day'] = keyed_number_input(
+                ec2, "40-Day Actual Count (MEM)", "enroll_40d_input",
+                st.session_state.get('enroll_40day', 0.0), min_value=0.0, step=1.0)
             enroll_findings = st.session_state.validation_results.get(ENROLLMENT_STEP, [])
             for level, msg in enroll_findings:
                 if level == "FLAG":

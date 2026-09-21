@@ -15,3 +15,4 @@ venv/
 *.xlsx
 *.csv
 !Actuals_Checklist.csv
+Review_*.json

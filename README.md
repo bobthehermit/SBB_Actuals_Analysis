@@ -12,7 +12,7 @@ A Streamlit application for automating quarterly actuals reviews of New Mexico s
 - **Revenue ratio checks** — Impact Aid, Ad Valorem, Forest Reserve fund distribution compliance
 - **Enrollment Projection Outlook** — funded growth projection vs the 40-day actual count
 - **Input guardrails** — entity/fiscal-year consistency checks, cash-report filename vs. entity mismatch warning, per-period row counts before pulling, refusal to pull unsubmitted periods
-- **Interactive checklist** with progress tracking and per-step notes, autosaved as you work
+- **Interactive checklist** with progress tracking and per-step notes, autosaved to the browser as you work, plus a one-click save file
 - **Exports** — Word findings memo, Excel checklist tracker, HTML visual dashboard, district email text, and a filled district Feedback-Checklist workbook
 
 ## Data Sources
@@ -32,13 +32,17 @@ A Streamlit application for automating quarterly actuals reviews of New Mexico s
 
 ## Saving and Resuming a Review
 
-There are two layers, designed so you never have to remember to save.
+Everything is built on one small **review snapshot** (JSON): checklist ticks, notes, typed inputs (Steps 6/7/47, enrollment), entity/FY/period, and the cash report Summary tab. Revenue/Expenditure pulled from OBMS are re-pulled on restore rather than stored.
 
-**Autosave (automatic, per browser).** Every time the review changes — a box ticked, a note typed, an input entered — the app writes a compact snapshot to the browser's `localStorage`: checklist status, notes, typed inputs, entity/FY/period, and the cash report Summary tab. Revenue and Expenditure are *not* stored; they are re-pulled from OBMS when you resume. Up to 12 reviews are kept (oldest dropped), so several schools can be in progress at once. After a crash, refresh, or redeploy, the sidebar offers the saved reviews under **Save / Resume Progress → Autosaved reviews in this browser**, with Resume and Delete. Autosave is tied to the browser and host it was created on; it does not follow you to another machine. Reviews built from *uploaded* Revenue/Expenditure files restore everything except those two reports (re-upload them).
+**Autosave (automatic, per browser).** Every tick, note, or typed input writes the snapshot to the browser's `localStorage`. The bar pinned above the checklist shows **Progress · ✓ autosaved HH:MM:SS** — the checkmark appears only after the browser confirms the write. If the browser storage isn't responding, the bar and the sidebar say so plainly instead of claiming autosave is on. Up to 12 reviews are kept (oldest dropped); each tab updates only its own review's slot, so two tabs reviewing different schools don't overwrite each other. After a crash, refresh, or redeploy, pick the review under **Save / Resume Progress → Autosaved reviews in this browser** and click **Resume**. Autosave is tied to the browser and host; it does not follow you to another machine.
 
-**Portable save file (manual).** Click **Prepare save file**, then **Download Progress** to get a `.pkl` that contains the full review including the DataFrames. Use this to move a review between machines or file it alongside the district's folder. Restore it with **Resume a Previous Review**. The download button label tells you if the review has changed since the file was prepared.
+**No silent overwrites.** If you load a review (OBMS pull, upload, or save file) that this browser already has an autosave for, and the two differ, autosave pauses and asks: *Use the autosave* or *Keep what's on screen*. Nothing is overwritten until you choose.
 
-**Start a new review** clears the loaded data, checklist, and notes. Pulling a different entity or period from OBMS also starts clean — the previous review remains in autosave.
+**Save file (manual, one click).** **Download save file** sits next to the progress bar and always contains exactly what's on screen — it's rebuilt on every checklist change. Each download is a new file stamped with date and time (`Review_<Entity>_<FY>_<Period>_<YYYYMMDD-HHMMSS>.json`), so saving often is safe and the newest file sorts last. Restore with **Resume from a save file** in the sidebar. Reviews built from *uploaded* Revenue/Expenditure files carry those reports inside the save file too. A note you're still typing is applied when you click out of the box (or press Ctrl+Enter).
+
+Older `.pkl` progress files still load through the same uploader. JSON is the new format because unpickling a file runs code from it, and JSON is readable in any text editor.
+
+**Start a new review** clears the loaded data, checklist, and notes (including the upload boxes). Pulling a different entity or period from OBMS also starts clean — the previous review remains in autosave.
 
 ## Exports
 
@@ -55,8 +59,8 @@ streamlit run Actuals_Analysis_v2.py
 
 - **`pyarrow` must stay below 25** (pinned in `requirements.txt`). pyarrow 25.0.0 has a native bug that segfaults under Streamlit's dataframe serialization. Use `pip install "pyarrow==24.0.0"` if the local venv drifts.
 - The app sets `pd.set_option("mode.string_storage", "python")` at startup to sidestep pandas 3.x Arrow-backed-string crashes inside Streamlit. Leave it in place.
-- `streamlit-js-eval` provides the browser autosave. If it is missing the app still runs, with autosave disabled and a note in the sidebar.
-- Streamlit ≥ 1.37 is required for `st.fragment`.
+- `streamlit-js-eval` provides the browser autosave. If it is missing the app still runs, with autosave disabled and a warning in the save bar and sidebar.
+- Streamlit ≥ 1.45 is required (`st.fragment`, `download_button(on_click="ignore")`).
 
 ## Performance notes
 
@@ -66,7 +70,8 @@ The app is structured to keep per-interaction cost low, which matters on small h
 - Fiscal-year period/entity lists and per-entity row counts are cached by Drive file ID, so the big frames are not scanned on reruns.
 - `run_all_validations` and `generate_analysis_summary` are `st.cache_data`-cached on their inputs; they only rerun when data, entity, period, or a typed input changes.
 - The checklist is an `st.fragment`: ticking a box or typing a note reruns only the checklist, not the sidebar, validations, or dashboard. Inputs that feed validations (Step 47, enrollment) escalate to a full rerun when changed.
-- The cash report Excel is parsed once per uploaded file, and exports/pickles are built on demand.
+- The cash report Excel is parsed once per uploaded file, and exports are built on demand. The save file is small (no OBMS DataFrames), so it is rebuilt on each checklist render — that's what keeps it current.
+- The save bar and autosave live inside the checklist fragment. Anything outside the fragment (the sidebar) does not rerun on a checkbox click, so save state shown there would go stale.
 
 ## Deployment
 
@@ -91,7 +96,7 @@ SBB_Actuals_Analysis/
 
 ## Notes
 
-- District data files (CSV/Excel), saved sessions (`.pkl`), and the local `venv/` are excluded from the repo via `.gitignore`
+- District data files (CSV/Excel), save files (`.json` / legacy `.pkl`), and the local `venv/` are excluded from the repo via `.gitignore`
 - The Review Period (Q1 vs Q2–Q4) auto-sets from the OBMS pull's reporting period
 - Approved actuals become public record on New Mexico's Sunshine Portal (OpenBooks); the exported memo carries a standing notice
 - The checklist steps align with SBB's quarterly review procedures per NMAC 6.20.2

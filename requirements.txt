@@ -1,4 +1,4 @@
-streamlit>=1.37  # st.fragment
+streamlit>=1.45  # st.fragment, download_button(on_click="ignore")
 pandas
 numpy
 pyarrow<25  # 25.0.0 segfaults under Streamlit — see repo notes
