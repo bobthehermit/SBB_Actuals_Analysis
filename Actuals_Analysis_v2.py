@@ -3407,9 +3407,18 @@ def restore_review(p: Dict, claim: bool = True) -> List[str]:
         else:
             ss.expenditure_df = build_obms_actuals_report(act_p, bud, entity, "E")
             ss.revenue_df = build_obms_actuals_report(act_p, bud, entity, "R")
-            ss['obms_fy'] = fy          # point the sidebar selectors at it
-            ss['obms_period'] = period
-            ss['obms_entity'] = entity
+            # Point the sidebar selectors at the restored review. These are
+            # widget keys, and Streamlit forbids writing a widget's key once
+            # that widget has been drawn in the current run -- and the
+            # resume controls sit BELOW the selectors in the sidebar. So park
+            # the values; main() applies them at the top of the next run
+            # (after st.rerun()), before any widget exists.
+            ss['_pending_widget_values'] = {
+                'rev_exp_source': "Pull directly from OBMS",
+                'obms_fy': fy,
+                'obms_period': period,
+                'obms_entity': entity,
+            }
     elif p.get('source') == 'upload':
         try:
             if p.get('revenue_json'):
@@ -3968,6 +3977,11 @@ def render_checklist(user_inputs: Dict):
 
 
 def main():
+    # Apply selector values parked by restore_review() on the previous run.
+    # This must happen before the sidebar draws its widgets.
+    for _k, _v in st.session_state.pop('_pending_widget_values', {}).items():
+        st.session_state[_k] = _v
+
     if not st.session_state.welcome_dismissed:
         render_welcome_modal()
     render_header(HEADER_TITLE, HEADER_SUB, LOGO_LEFT_PATH, LOGO_RIGHT_PATH, LOGO_LEFT_LINK, LOGO_RIGHT_LINK, SHOW_HEADER_LOGOS)
