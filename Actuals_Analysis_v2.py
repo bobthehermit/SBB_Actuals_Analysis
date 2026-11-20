@@ -1800,12 +1800,24 @@ def generate_html_report(
                             'pct_used': ((ytd_sum + enc_sum) / bud_sum * 100) if bud_sum > 0 else 0
                         }
             
+            # --- Line-level rollup (Fund / Function / Object) ---
+            # Raw OBMS rows are finer-grained (location, job class, program), and
+            # budget often sits on a different row than the actuals/encumbrances
+            # charged against it. Comparing row by row produces false "$0 budget"
+            # and "$0 YTD" lines, so roll up to the budget line before comparing.
+            line_keys = [k for k in ('Fund_Key', 'Function_Key', 'Object_Key') if k in e_df.columns]
+            sum_cols = [c for c in (ytd_col, bud_col, enc_col) if c]
+            label_cols = [c for c in ('Function', 'Object') if c in e_df.columns and c not in line_keys]
+            agg_spec = {c: 'sum' for c in sum_cols}
+            agg_spec.update({c: 'first' for c in label_cols})
+            line_df = e_df.groupby(line_keys, as_index=False, dropna=False).agg(agg_spec) if line_keys else e_df
+
             # --- Encumbrance Risk Analysis ---
             # Lines where Actuals + Encumbrances > Budget
             if enc_col and bud_col:
-                e_df['_total_committed'] = e_df[ytd_col] + e_df[enc_col]
-                e_df['_over_committed'] = e_df['_total_committed'] - e_df[bud_col]
-                over_committed = e_df[e_df['_over_committed'] > 100].copy()  # threshold $100
+                line_df['_total_committed'] = line_df[ytd_col] + line_df[enc_col]
+                line_df['_over_committed'] = line_df['_total_committed'] - line_df[bud_col]
+                over_committed = line_df[line_df['_over_committed'] > 100].copy()  # threshold $100
                 over_committed = over_committed.sort_values('_over_committed', ascending=False).head(20)
                 
                 for _, row in over_committed.iterrows():
@@ -1830,7 +1842,7 @@ def generate_html_report(
             
             # --- Burn Rate Analysis ---
             if bud_col:
-                for _, row in e_df.iterrows():
+                for _, row in line_df.iterrows():
                     budget = row[bud_col]
                     ytd = row[ytd_col]
                     obj_key = row.get('Object_Key', '')
@@ -2570,7 +2582,7 @@ def generate_html_report(
 </div>
 
 <!-- 7. ENCUMBRANCE RISK -->
-{'<div class="section"><h2 class="section-title">Encumbrance Risk Analysis</h2><p class="section-subtitle">Lines where Actuals + Encumbrances exceed Adjusted Budget — total over-committed: <strong style="color:var(--red);">${total_enc_risk:,.0f}</strong></p><div class="info-box red">These represent committed over-expenditures. If encumbrances convert to actuals, these lines will be over budget. BARs should be submitted to restore budget authority.</div><div class="table-wrap"><table><thead><tr><th>Fund</th><th>Function</th><th>Object</th><th style="text-align:right">Budget</th><th style="text-align:right">Actuals</th><th style="text-align:right">Encumbered</th><th style="text-align:right">Total Committed</th><th style="text-align:right">Over Amount</th></tr></thead><tbody>' + enc_risk_rows + '</tbody></table></div></div>' if enc_risk_rows else ''}
+{f'<div class="section"><h2 class="section-title">Encumbrance Risk Analysis</h2><p class="section-subtitle">Lines where Actuals + Encumbrances exceed Adjusted Budget — total over-committed: <strong style="color:var(--red);">${total_enc_risk:,.0f}</strong></p><div class="info-box red">These represent committed over-expenditures. If encumbrances convert to actuals, these lines will be over budget. BARs should be submitted to restore budget authority.</div><div class="table-wrap"><table><thead><tr><th>Fund</th><th>Function</th><th>Object</th><th style="text-align:right">Budget</th><th style="text-align:right">Actuals</th><th style="text-align:right">Encumbered</th><th style="text-align:right">Total Committed</th><th style="text-align:right">Over Amount</th></tr></thead><tbody>' + enc_risk_rows + '</tbody></table></div></div>' if enc_risk_rows else ''}
 
 <!-- 8. BURN RATE -->
 {'<div class="section"><h2 class="section-title">Burn Rate / Pace Analysis</h2><p class="section-subtitle">At ' + quarter_label + ', expected actuals burn rate is ~25%. Flagging outliers.</p>' + (f'<div class="subsection-title">Over-Pace (Burn Rate &gt; 40% at {quarter_label})</div><p class="section-subtitle">These lines are spending faster than expected and may overspend by year-end.</p><div class="table-wrap"><table><thead><tr><th>Fund</th><th>Function</th><th>Object</th><th style="text-align:right">Budget</th><th style="text-align:right">YTD</th><th style="text-align:right">Burn %</th></tr></thead><tbody>{burn_over_rows}</tbody></table></div>' if burn_over_rows else '') + (f'<div class="subsection-title" style="margin-top:24px;">Under-Pace / No Activity (Budget &gt; $50k, $0 YTD)</div><p class="section-subtitle">Significant budget authority with no actuals — may indicate delayed programs or coding issues.</p><div class="table-wrap"><table><thead><tr><th>Fund</th><th>Function</th><th>Object</th><th style="text-align:right">Budget</th><th style="text-align:right">YTD</th><th style="text-align:right">Burn %</th></tr></thead><tbody>{burn_under_rows}</tbody></table></div>' if burn_under_rows else '') + '</div>' if (burn_over_rows or burn_under_rows) else ''}
@@ -2579,7 +2591,7 @@ def generate_html_report(
 {'<div class="section"><h2 class="section-title">FTE Variance Analysis</h2><p class="section-subtitle">Object 51100 staffing — flagging variances of 2.0+ FTE between actuals and budget</p><div class="table-wrap"><table><thead><tr><th>Job Class</th><th style="text-align:right">Actual FTE</th><th style="text-align:right">Budgeted FTE</th><th style="text-align:right">Variance</th><th>Status</th><th>Note</th></tr></thead><tbody>' + fte_var_rows + '</tbody></table></div></div>' if fte_var_rows else ''}
 
 <!-- 10. SALARY BY JOB CLASS -->
-{'<div class="section"><h2 class="section-title">Salary by Job Class (Object 51100)</h2><p class="section-subtitle">Total salary: <strong>${total_salary:,.0f}</strong> | Total FTE: <strong>{total_fte:.1f}</strong></p><div class="chart-container" style="height:380px;margin-bottom:20px;"><canvas id="salaryChart"></canvas></div><div class="table-wrap"><table><thead><tr><th>Job Class</th><th style="text-align:right">Budget</th><th style="text-align:right">YTD Salary</th><th style="text-align:right">Encumbered</th><th style="text-align:right">Actual FTE</th><th style="text-align:right">Budgeted FTE</th><th style="text-align:right">FTE &Delta;</th><th style="text-align:right">Avg Salary</th></tr></thead><tbody>' + salary_rows + '</tbody></table></div></div>' if salary_rows else ''}
+{f'<div class="section"><h2 class="section-title">Salary by Job Class (Object 51100)</h2><p class="section-subtitle">Total salary: <strong>${total_salary:,.0f}</strong> | Total FTE: <strong>{total_fte:.1f}</strong></p><div class="chart-container" style="height:380px;margin-bottom:20px;"><canvas id="salaryChart"></canvas></div><div class="table-wrap"><table><thead><tr><th>Job Class</th><th style="text-align:right">Budget</th><th style="text-align:right">YTD Salary</th><th style="text-align:right">Encumbered</th><th style="text-align:right">Actual FTE</th><th style="text-align:right">Budgeted FTE</th><th style="text-align:right">FTE &Delta;</th><th style="text-align:right">Avg Salary</th></tr></thead><tbody>' + salary_rows + '</tbody></table></div></div>' if salary_rows else ''}
 
 <!-- 11. PROGRAM-LEVEL SPENDING -->
 {'<div class="section"><h2 class="section-title">Program-Level Spending</h2><p class="section-subtitle">Expenditure breakdown by program code</p><div class="chart-row"><div class="chart-container" style="height:320px;"><canvas id="programChart"></canvas></div><div class="table-wrap"><table><thead><tr><th>Program</th><th style="text-align:right">YTD Actuals</th><th style="text-align:right">Encumbered</th><th style="text-align:right">Budget</th><th style="text-align:right">% Used</th></tr></thead><tbody>' + program_rows + '</tbody></table></div></div></div>' if program_rows else ''}
