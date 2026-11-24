@@ -326,6 +326,27 @@ def inject_links(text: str) -> str:
 
 # ---------- HELPER FUNCTIONS: DATA LOADING ----------
 
+def _checklist_text(val) -> str:
+    """CSV cell as clean text; blank/NaN cells become '' instead of 'nan'."""
+    if val is None or (isinstance(val, float) and pd.isna(val)):
+        return ""
+    return str(val).strip()
+
+
+def html_escape(text) -> str:
+    """Minimal HTML escaping for user-entered notes and finding text."""
+    return (str(text).replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;'))
+
+
+# Display names for cash-report rollup funds (OBMS only carries the child
+# funds, e.g. 25153, so rollups like 25000 have no name of their own).
+ROLLUP_FUND_NAMES = {
+    '24000': 'Federal Flowthrough Grants', '25000': 'Federal Direct Grants',
+    '26000': 'Local Grants', '27000': 'State Flowthrough Grants',
+    '28000': 'State Direct Grants', '29000': 'Local or State Grants',
+}
+
+
 def load_official_checklist() -> List[Dict]:
     if CHECKLIST_FILE.exists():
         try:
@@ -337,7 +358,7 @@ def load_official_checklist() -> List[Dict]:
                     "review_area": str(row['Review Area']),
                     "ucoa_line": str(row['UCOA LINE/AREA of Report']).replace('Picture', '').replace('nan', ''),
                     "applies_to": str(row['Districts/ Charters']).replace('nan', ''),
-                    "check": str(row['Check ']),
+                    "check": _checklist_text(row.get('Check ')) or _checklist_text(row.get('UCOA LINE/AREA of Report')).replace('Picture', '').strip(),
                     "support": str(row['Support']),
                     "method_notes": str(row['Suggested Method/Notes']),
                     "disapprove": str(row['Disapprove?']),
@@ -667,7 +688,7 @@ def run_all_validations(cash_df, revenue_df, expenditure_df, entity_name, is_q1,
                     cols['YTD Amount'] = ytd_col
                 build_detail_table(negs, cols, 8, f"Negative Revenue Period Amounts ({len(negs)} lines)")
             else:
-                add_finding(8, "No negative values in Actuals Period Amount", is_pass=True)
+                add_finding(8, "No negative values in Revenue Actuals Period Amount", is_pass=True)
         
         # --- STEP 9: Check for negative values in Actuals YTD ---
         if ytd_col:
@@ -682,7 +703,7 @@ def run_all_validations(cash_df, revenue_df, expenditure_df, entity_name, is_q1,
                     cols['Period Amount'] = per_col
                 build_detail_table(negs, cols, 9, f"Negative Revenue YTD Amounts ({len(negs)} lines)")
             else:
-                add_finding(9, "No negative values in Actuals YTD", is_pass=True)
+                add_finding(9, "No negative values in Revenue Actuals YTD", is_pass=True)
         
         # --- STEP 10: Check for negative values in Revenue Report (Available Balance) ---
         bal_col = find_col_include(r_df, ['available balance'])
@@ -1064,7 +1085,7 @@ def run_all_validations(cash_df, revenue_df, expenditure_df, entity_name, is_q1,
                 enc_sum = jc_data[enc_col].sum() if enc_col else 0
                 adj_fte_sum = jc_data[adj_fte_col_32].sum() if adj_fte_col_32 else 0
                 
-                fte_delta = adj_fte_sum - fte_sum
+                fte_delta = fte_sum - adj_fte_sum  # actual minus budgeted; negative = fewer FTE than budgeted
                 avg_salary = ytd_sum / fte_sum if fte_sum > 0 else 0
                 
                 jc_label = jc
@@ -1081,7 +1102,7 @@ def run_all_validations(cash_df, revenue_df, expenditure_df, entity_name, is_q1,
                     'Actuals FTE': f"{fte_sum:.2f}",
                     'Budgeted FTE': f"{adj_fte_sum:.2f}",
                     'FTE Δ': f"{fte_delta:+.2f}",
-                    'Avg Salary': f"${avg_salary:,.2f}" if fte_sum > 0 else "N/A"
+                    'YTD Salary / FTE': f"${avg_salary:,.2f}" if fte_sum > 0 else "N/A"
                 })
             
             if detail_rows_32:
@@ -1502,11 +1523,30 @@ def run_all_validations(cash_df, revenue_df, expenditure_df, entity_name, is_q1,
                 add_finding(55, f"Fund 31100 (GO Bond Building) Revenue: ${rev_31100:,.2f}", is_pass=True)
                 add_finding(55, f"Fund 31900 Revenue: ${rev_31900:,.2f}", is_pass=True)
 
-    # Step 47: Cash Balance Year-over-Year
+    # Step 47: prior-year Q4 Line 7 (ending cash) must tie to the current
+    # report's Line 1 (beginning cash). Line 1 is read straight from the cash
+    # report when available, so a typo in the "this year" box can't misstate
+    # the comparison (the old version compared to a hand-typed Line 7).
     ly = user_inputs.get('step_47_last_year', 0.0)
     ty = user_inputs.get('step_47_this_year', 0.0)
-    if ly != 0 and ty != 0 and abs(ly - ty) > 0.01:
-        add_finding(47, f"Cash Balance Difference: Last Year ${ly:,.2f} vs This Year ${ty:,.2f}")
+    line1_total = None
+    if c_df is not None:
+        col_l1 = next((c for c in c_df.columns if re.fullmatch(r'\s*Line 1\s*', str(c))), None)
+        if col_l1:
+            body = c_df[c_df['Fund_Key'] != 'GRAND TOTAL'] if 'Fund_Key' in c_df.columns else c_df
+            line1_total = float(clean_currency_series(body[col_l1]).sum())
+    if line1_total is not None and abs(line1_total) > 0.01:
+        if ty and abs(ty - line1_total) > 0.01:
+            add_finding(47, f"'This Year' input (${ty:,.2f}) does not match cash report Line 1 "
+                            f"(${line1_total:,.2f}); comparison uses Line 1.", level="WARN")
+        ty = line1_total
+    if ly != 0 and ty != 0:
+        diff = ty - ly
+        if abs(diff) > 0.01:
+            add_finding(47, f"Beginning cash variance: prior-year Q4 Line 7 ${ly:,.2f} vs "
+                            f"current Line 1 ${ty:,.2f} (difference ${diff:,.2f})")
+        else:
+            add_finding(47, f"Current Line 1 ties to prior-year Q4 Line 7 (${ly:,.2f})", is_pass=True)
 
     # Enrollment Projection Outlook (growth projection vs 40-day count)
     proj = user_inputs.get('enroll_projected', 0.0)
@@ -1537,6 +1577,31 @@ def run_all_validations(cash_df, revenue_df, expenditure_df, entity_name, is_q1,
 # ---------- ANALYSIS SUMMARY GENERATOR ----------
 
 @st.cache_data(show_spinner=False, max_entries=8)
+def merge_finding_lines(findings) -> List[Tuple[str, str]]:
+    """Validation steps emit multi-line findings one line at a time: a header
+    ending in ':' followed by indented detail lines (e.g. Step 49's per-fund
+    mismatch block). Reports used to show each line as its own concern.
+    This folds a header and its detail lines into one entry ('\n'-joined)
+    and drops blank lines.
+
+    A line counts as detail when it starts with whitespace or a bullet; it
+    attaches to the previous entry when that entry has the same status or
+    its last line ends with ':' (an INFO header introducing PASS lines)."""
+    merged: List[List[str]] = []
+    for status, msg in findings:
+        text = str(msg).rstrip()
+        if not text.strip():
+            continue
+        is_detail = text[:1].isspace() or text.lstrip().startswith('•')
+        if merged and is_detail and (
+                merged[-1][0] == status
+                or merged[-1][1].splitlines()[-1].endswith(':')):
+            merged[-1][1] += "\n" + text.strip()
+        else:
+            merged.append([status, text.strip()])
+    return [(s, m) for s, m in merged]
+
+
 def generate_analysis_summary(cash_df, revenue_df, expenditure_df, entity_name, is_q1, validation_results) -> Dict:
     """Cached for the same reason as run_all_validations. validation_results
     is a dict of lists of tuples — hashable by cache_data.
@@ -1582,13 +1647,14 @@ def generate_analysis_summary(cash_df, revenue_df, expenditure_df, entity_name, 
         if col_l7:
             summary['statistics']['total_cash'] = c_df[c_df['Fund_Key'] != 'GRAND TOTAL'][col_l7].sum()
     
-    # Categorize findings
+    # Categorize findings (multi-line blocks folded; repeated highlights dropped)
+    seen_highlights = set()
     for step, findings in validation_results.items():
-        for finding in findings:
-            status, msg = finding
+        for status, msg in merge_finding_lines(findings):
             if status == "FLAG":
                 summary['concerns'].append(f"{step_label(step)}: {msg}")
-            elif status == "PASS":
+            elif status == "PASS" and msg not in seen_highlights:
+                seen_highlights.add(msg)
                 summary['highlights'].append(f"{step_label(step)}: {msg}")
     
     return summary
@@ -1949,6 +2015,7 @@ def generate_html_report(
     fund_data_list = []
     funds_exceed_reimbursable = []
     funds_exceed_non_reimbursable = []
+    funds_exceed_capital_debt = []
     
     c_df = None
     if cash_df is not None:
@@ -1967,6 +2034,9 @@ def generate_html_report(
         
         # Reimbursable fund prefixes (federal flow-through, state flow-through)
         reimbursable_prefixes = ('24', '25', '26', '27', '28', '29')
+        # Capital and debt service funds normally spend down beginning cash
+        # (bond proceeds, prior tax receipts), so exp > rev there is expected.
+        capital_debt_prefixes = ('31', '41', '42', '43')
         
         for _, row in c_df.iterrows():
             fund = str(row.get('Fund_Key', ''))
@@ -1994,17 +2064,23 @@ def generate_html_report(
             # Split exceeding funds into reimbursable vs non-reimbursable
             if net < -0.01 and exp > 0:
                 is_reimbursable = fund.startswith(reimbursable_prefixes)
+                fund_name = exp_by_fund.get(fund, {}).get('name', '')
+                if not fund_name or fund_name == fund:
+                    fund_name = ROLLUP_FUND_NAMES.get(fund, '')
                 entry = {
                     'fund': fund, 'revenue': rev, 'expenditure': exp, 'net': net,
-                    'fund_name': exp_by_fund.get(fund, {}).get('name', fund)
+                    'fund_name': fund_name
                 }
                 if is_reimbursable:
                     funds_exceed_reimbursable.append(entry)
+                elif fund.startswith(capital_debt_prefixes):
+                    funds_exceed_capital_debt.append(entry)
                 else:
                     funds_exceed_non_reimbursable.append(entry)
         
         funds_exceed_non_reimbursable.sort(key=lambda x: x['net'])
         funds_exceed_reimbursable.sort(key=lambda x: x['net'])
+        funds_exceed_capital_debt.sort(key=lambda x: x['net'])
     
     net_position = total_revenue - total_expenditure
     
@@ -2016,8 +2092,13 @@ def generate_html_report(
     concerns_low = []
     highlights = []
     
+    seen_highlights = set()
     for step, findings in validation_results.items():
-        for status, msg in findings:
+        for status, msg in merge_finding_lines(findings):
+            if status == "PASS":
+                if msg in seen_highlights:
+                    continue
+                seen_highlights.add(msg)
             if status == "FLAG":
                 # Categorize by keywords
                 msg_lower = msg.lower()
@@ -2039,17 +2120,33 @@ def generate_html_report(
             if item.get('user_notes') and item['user_notes'].strip():
                 notes = item['user_notes'].strip()
                 step = item['step']
-                # Auto-assign priority based on step area and keywords
                 notes_lower = notes.lower()
-                if any(k in notes_lower for k in ['material', 'audit finding', 'exceed budget', 'bar', 'negative cash', 'required', 'rfr']):
+                # Only notes that ask the district for something are action
+                # items; FYI/pass notes (e.g. "910B-5 matches") stay in the
+                # Detailed Review Notes section only.
+                asks = re.search(r'\?|\bplease\b|\bconfirm|\bexplain|\bprovide|\bclarify|'
+                                 r'\bsubmit|\bcorrect\b|\brecord\b|\baction required', notes_lower)
+                if not asks:
+                    continue
+                # High: budget authority, cash/tie-out problems, transfers.
+                # Word-boundary match so 'bar' no longer hits any word that
+                # contains it, and statutory 'required' wording isn't High.
+                if re.search(r'\bbars?\b|exceed|negative cash|variance|should tie|'
+                             r'does not tie|permanent cash transfer|material|audit finding', notes_lower):
                     priority = 'High'
-                elif any(k in notes_lower for k in ['confirm', 'explain', 'provide', 'clarify', 'please']):
+                elif re.search(r'\bplease\b|\bconfirm|\bexplain|\bprovide|\bclarify|\?', notes_lower):
                     priority = 'Medium'
                 else:
                     priority = 'Low'
-                
-                # Truncate for table display
-                display_note = notes[:200] + ('...' if len(notes) > 200 else '')
+
+                # Truncate at a word boundary for table display; keep line breaks
+                limit = 220
+                if len(notes) > limit:
+                    cut = notes[:limit].rsplit(None, 1)[0].rstrip(' ,;:')
+                    display_note = cut + ' …'
+                else:
+                    display_note = notes
+                display_note = html_escape(display_note).replace('\n', '<br>')
                 action_items.append({
                     'priority': priority,
                     'step': step,
@@ -2084,7 +2181,8 @@ def generate_html_report(
     # Expenditure by fund type (donut)
     fund_type_map = {
         '11': 'Operational', '12': 'Locally Authorized', '13': 'Transportation',
-        '15': 'Impact Aid / Local Rev', '21': 'Food Services', '22': 'Athletics',
+        '14': 'Instructional Materials', '15': 'Impact Aid / Local Rev',
+        '21': 'Food Services', '22': 'Athletics', '26': 'Local Grants',
         '23': 'Non-Instructional', '24': 'Federal Grants', '25': 'Federal Direct',
         '27': 'State Grants', '28': 'Other State', '29': 'State/Local Grants',
         '31': 'Capital / Bonds', '41': 'GO Debt Services', '43': 'ETN Debt Services'
@@ -2119,13 +2217,37 @@ def generate_html_report(
     # ======================================================
     
     # --- Concerns HTML ---
+    tables_shown = set()
+
+    def build_step_table(step):
+        """Mini table for a concern that says '(see table below)'. Shown once per step."""
+        tf = (table_findings or {}).get(step)
+        if not tf or step in tables_shown or tf.get('data') is None or tf['data'].empty:
+            return ""
+        tables_shown.add(step)
+        df = tf['data']
+        head = ''.join(f'<th>{html_escape(c)}</th>' for c in df.columns)
+        body = ''
+        for _, r in df.head(25).iterrows():
+            cells = ''
+            for c in df.columns:
+                v = str(r[c])
+                cls = ' class="negative"' if v.startswith(('-', '($', '-$', '$-')) else ''
+                cells += f'<td{cls}>{html_escape(v)}</td>'
+            body += f'<tr>{cells}</tr>'
+        more = f'<div class="mini-more">… {len(df) - 25} more rows in the Word memo</div>' if len(df) > 25 else ''
+        return f'<div class="mini-table"><table><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table>{more}</div>'
+
     def build_concern_card(concern_list, severity, icon, color_class):
         if not concern_list:
             return ""
         items_html = ""
         for c in concern_list[:8]:
-            msg = c['message'].strip()
-            items_html += f'<div class="concern-card {color_class}"><div class="concern-icon">{icon}</div><div class="concern-body"><span class="concern-step">{step_label(c["step"])}</span>{msg}</div></div>\n'
+            msg = html_escape(c['message'].strip()).replace('\n', '<br>')
+            table_html = build_step_table(c['step']) if 'see table below' in c['message'].lower() else ''
+            if 'see table below' in c['message'].lower() and not table_html:
+                msg = msg.replace(' (see table below)', '')
+            items_html += f'<div class="concern-card {color_class}"><div class="concern-icon">{icon}</div><div class="concern-body"><span class="concern-step">{step_label(c["step"])}</span>{msg}{table_html}</div></div>\n'
         return items_html
     
     high_concerns_html = build_concern_card(concerns_high, 'High', '&#9650;', 'high')
@@ -2137,7 +2259,7 @@ def generate_html_report(
         html = ""
         for f in fund_list:
             html += f'''<tr>
-                <td>{f['fund']} — {f.get('fund_name', '')}</td>
+                <td>{f['fund']}{(' — ' + html_escape(f['fund_name'])) if f.get('fund_name') else ''}</td>
                 <td class="num">${f['revenue']:,.0f}</td>
                 <td class="num">${f['expenditure']:,.0f}</td>
                 <td class="num negative">&minus;${abs(f['net']):,.0f}</td>
@@ -2147,6 +2269,7 @@ def generate_html_report(
     
     non_reimb_rows = build_fund_exceed_rows(funds_exceed_non_reimbursable, 'high', 'Non-Reimbursable')
     reimb_rows = build_fund_exceed_rows(funds_exceed_reimbursable, 'low', 'Reimbursable')
+    capdebt_rows = build_fund_exceed_rows(funds_exceed_capital_debt, 'ok', 'Capital / Debt')
     
     # --- Function Table ---
     function_rows = ""
@@ -2251,8 +2374,8 @@ def generate_html_report(
     # --- Compliance Highlights ---
     highlights_html = ""
     for h in highlights[:15]:
-        msg = h['message'].replace('', '').strip()
-        highlights_html += f'<div class="compliance-item"><div class="check">✓</div><div>{msg}</div></div>\n'
+        msg = html_escape(h['message'].strip()).replace('\n', '<br>')
+        highlights_html += f'<div class="compliance-item"><div class="check">✓</div><div><span class="concern-step">{step_label(h["step"])}</span>{msg}</div></div>\n'
     
     # --- Action Items Table ---
     action_rows = ""
@@ -2392,6 +2515,11 @@ def generate_html_report(
   .concern-card.low {{ background: var(--yellow-bg); border-color: var(--yellow); }}
   .concern-icon {{ font-size: 1.1rem; flex-shrink: 0; margin-top: 2px; }}
   .concern-body {{ font-size: 0.88rem; color: #374151; line-height: 1.5; }}
+  .mini-table {{ margin-top: 10px; overflow-x: auto; }}
+  .mini-table table {{ font-size: 0.8rem; background: rgba(255,255,255,0.7); border-radius: 6px; }}
+  .mini-table th {{ padding: 6px 10px; font-size: 0.72rem; }}
+  .mini-table td {{ padding: 5px 10px; white-space: nowrap; }}
+  .mini-more {{ font-size: 0.75rem; color: var(--muted); margin-top: 4px; }}
   .concern-step {{
     display: inline-block; background: rgba(0,0,0,0.08); border-radius: 4px;
     padding: 1px 6px; font-size: 0.75rem; font-weight: 700; margin-right: 6px;
@@ -2545,7 +2673,7 @@ def generate_html_report(
 </div>
 
 <!-- 4. FUNDS WHERE EXP > REV (Split) -->
-{'<div class="section"><h2 class="section-title">Funds Where Expenditures Exceed Revenue</h2>' + (f'<div class="subsection-title">Non-Reimbursable Funds (Requires Explanation)</div><div class="info-box red"><strong>{len(funds_exceed_non_reimbursable)} fund(s)</strong> have expenditures exceeding revenue in non-reimbursable categories. These require immediate attention.</div><div class="table-wrap"><table><thead><tr><th>Fund</th><th style="text-align:right">Revenue</th><th style="text-align:right">Expenditure</th><th style="text-align:right">Net</th><th>Type</th></tr></thead><tbody>{non_reimb_rows}</tbody></table></div>' if non_reimb_rows else '') + (f'<div class="subsection-title" style="margin-top:24px;">Reimbursable Funds (Expected Behavior)</div><p class="section-subtitle">Federal/state flow-through funds may carry negative net until reimbursed.</p><div class="table-wrap"><table><thead><tr><th>Fund</th><th style="text-align:right">Revenue</th><th style="text-align:right">Expenditure</th><th style="text-align:right">Net</th><th>Type</th></tr></thead><tbody>{reimb_rows}</tbody></table></div>' if reimb_rows else '') + '</div>' if (non_reimb_rows or reimb_rows) else ''}
+{'<div class="section"><h2 class="section-title">Funds Where Expenditures Exceed Revenue</h2>' + (f'<div class="subsection-title">Operating / Non-Reimbursable Funds (Explanation Requested)</div><div class="info-box red"><strong>{len(funds_exceed_non_reimbursable)} fund(s)</strong> have expenditures exceeding revenue and do not normally depend on reimbursement.</div><div class="table-wrap"><table><thead><tr><th>Fund</th><th style="text-align:right">Revenue</th><th style="text-align:right">Expenditure</th><th style="text-align:right">Net</th><th>Type</th></tr></thead><tbody>{non_reimb_rows}</tbody></table></div>' if non_reimb_rows else '') + (f'<div class="subsection-title" style="margin-top:24px;">Reimbursable Funds (Expected Behavior)</div><p class="section-subtitle">Federal/state flow-through funds may carry negative net until reimbursed.</p><div class="table-wrap"><table><thead><tr><th>Fund</th><th style="text-align:right">Revenue</th><th style="text-align:right">Expenditure</th><th style="text-align:right">Net</th><th>Type</th></tr></thead><tbody>{reimb_rows}</tbody></table></div>' if reimb_rows else '') + (f'<div class="subsection-title" style="margin-top:24px;">Capital Projects &amp; Debt Service (Spending Beginning Cash)</div><p class="section-subtitle">Bond, capital and debt service funds typically pay from beginning cash balances (bond proceeds, prior-year tax receipts), so expenditures exceeding current-year revenue is usually expected. Shown for reference.</p><div class="table-wrap"><table><thead><tr><th>Fund</th><th style="text-align:right">Revenue</th><th style="text-align:right">Expenditure</th><th style="text-align:right">Net</th><th>Type</th></tr></thead><tbody>{capdebt_rows}</tbody></table></div>' if capdebt_rows else '') + '</div>' if (non_reimb_rows or reimb_rows or capdebt_rows) else ''}
 
 <!-- 5. EXPENDITURE BY FUND TYPE (Donut + Table) -->
 <div class="section">
@@ -2585,13 +2713,13 @@ def generate_html_report(
 {f'<div class="section"><h2 class="section-title">Encumbrance Risk Analysis</h2><p class="section-subtitle">Lines where Actuals + Encumbrances exceed Adjusted Budget — total over-committed: <strong style="color:var(--red);">${total_enc_risk:,.0f}</strong></p><div class="info-box red">These represent committed over-expenditures. If encumbrances convert to actuals, these lines will be over budget. BARs should be submitted to restore budget authority.</div><div class="table-wrap"><table><thead><tr><th>Fund</th><th>Function</th><th>Object</th><th style="text-align:right">Budget</th><th style="text-align:right">Actuals</th><th style="text-align:right">Encumbered</th><th style="text-align:right">Total Committed</th><th style="text-align:right">Over Amount</th></tr></thead><tbody>' + enc_risk_rows + '</tbody></table></div></div>' if enc_risk_rows else ''}
 
 <!-- 8. BURN RATE -->
-{'<div class="section"><h2 class="section-title">Burn Rate / Pace Analysis</h2><p class="section-subtitle">At ' + quarter_label + ', expected actuals burn rate is ~25%. Flagging outliers.</p>' + (f'<div class="subsection-title">Over-Pace (Burn Rate &gt; 40% at {quarter_label})</div><p class="section-subtitle">These lines are spending faster than expected and may overspend by year-end.</p><div class="table-wrap"><table><thead><tr><th>Fund</th><th>Function</th><th>Object</th><th style="text-align:right">Budget</th><th style="text-align:right">YTD</th><th style="text-align:right">Burn %</th></tr></thead><tbody>{burn_over_rows}</tbody></table></div>' if burn_over_rows else '') + (f'<div class="subsection-title" style="margin-top:24px;">Under-Pace / No Activity (Budget &gt; $50k, $0 YTD)</div><p class="section-subtitle">Significant budget authority with no actuals — may indicate delayed programs or coding issues.</p><div class="table-wrap"><table><thead><tr><th>Fund</th><th>Function</th><th>Object</th><th style="text-align:right">Budget</th><th style="text-align:right">YTD</th><th style="text-align:right">Burn %</th></tr></thead><tbody>{burn_under_rows}</tbody></table></div>' if burn_under_rows else '') + '</div>' if (burn_over_rows or burn_under_rows) else ''}
+{'<div class="section"><h2 class="section-title">Burn Rate / Pace Analysis</h2><p class="section-subtitle">At ' + quarter_label + ', expected actuals burn rate is ~25%. Flagging outliers.</p>' + (f'<div class="subsection-title">Over-Pace (Burn Rate &gt; 40% at {quarter_label})</div><p class="section-subtitle">These lines are spending faster than expected and may overspend by year-end. Note: annual premiums (workers&#39; compensation, property/liability insurance) and scheduled debt service payments are often paid in full early in the year, so a high burn rate on those lines is expected.</p><div class="table-wrap"><table><thead><tr><th>Fund</th><th>Function</th><th>Object</th><th style="text-align:right">Budget</th><th style="text-align:right">YTD</th><th style="text-align:right">Burn %</th></tr></thead><tbody>{burn_over_rows}</tbody></table></div>' if burn_over_rows else '') + (f'<div class="subsection-title" style="margin-top:24px;">Under-Pace / No Activity (Budget &gt; $50k, $0 YTD)</div><p class="section-subtitle">Significant budget authority with no actuals — may indicate delayed programs or coding issues.</p><div class="table-wrap"><table><thead><tr><th>Fund</th><th>Function</th><th>Object</th><th style="text-align:right">Budget</th><th style="text-align:right">YTD</th><th style="text-align:right">Burn %</th></tr></thead><tbody>{burn_under_rows}</tbody></table></div>' if burn_under_rows else '') + '</div>' if (burn_over_rows or burn_under_rows) else ''}
 
 <!-- 9. FTE VARIANCE -->
 {'<div class="section"><h2 class="section-title">FTE Variance Analysis</h2><p class="section-subtitle">Object 51100 staffing — flagging variances of 2.0+ FTE between actuals and budget</p><div class="table-wrap"><table><thead><tr><th>Job Class</th><th style="text-align:right">Actual FTE</th><th style="text-align:right">Budgeted FTE</th><th style="text-align:right">Variance</th><th>Status</th><th>Note</th></tr></thead><tbody>' + fte_var_rows + '</tbody></table></div></div>' if fte_var_rows else ''}
 
 <!-- 10. SALARY BY JOB CLASS -->
-{f'<div class="section"><h2 class="section-title">Salary by Job Class (Object 51100)</h2><p class="section-subtitle">Total salary: <strong>${total_salary:,.0f}</strong> | Total FTE: <strong>{total_fte:.1f}</strong></p><div class="chart-container" style="height:380px;margin-bottom:20px;"><canvas id="salaryChart"></canvas></div><div class="table-wrap"><table><thead><tr><th>Job Class</th><th style="text-align:right">Budget</th><th style="text-align:right">YTD Salary</th><th style="text-align:right">Encumbered</th><th style="text-align:right">Actual FTE</th><th style="text-align:right">Budgeted FTE</th><th style="text-align:right">FTE &Delta;</th><th style="text-align:right">Avg Salary</th></tr></thead><tbody>' + salary_rows + '</tbody></table></div></div>' if salary_rows else ''}
+{f'<div class="section"><h2 class="section-title">Salary by Job Class (Object 51100)</h2><p class="section-subtitle">Total salary: <strong>${total_salary:,.0f}</strong> | Total FTE: <strong>{total_fte:.1f}</strong></p><div class="chart-container" style="height:380px;margin-bottom:20px;"><canvas id="salaryChart"></canvas></div><div class="table-wrap"><table><thead><tr><th>Job Class</th><th style="text-align:right">Budget</th><th style="text-align:right">YTD Salary</th><th style="text-align:right">Encumbered</th><th style="text-align:right">Actual FTE</th><th style="text-align:right">Budgeted FTE</th><th style="text-align:right">FTE &Delta;</th><th style="text-align:right">YTD Salary / FTE</th></tr></thead><tbody>' + salary_rows + '</tbody></table></div></div>' if salary_rows else ''}
 
 <!-- 11. PROGRAM-LEVEL SPENDING -->
 {'<div class="section"><h2 class="section-title">Program-Level Spending</h2><p class="section-subtitle">Expenditure breakdown by program code</p><div class="chart-row"><div class="chart-container" style="height:320px;"><canvas id="programChart"></canvas></div><div class="table-wrap"><table><thead><tr><th>Program</th><th style="text-align:right">YTD Actuals</th><th style="text-align:right">Encumbered</th><th style="text-align:right">Budget</th><th style="text-align:right">% Used</th></tr></thead><tbody>' + program_rows + '</tbody></table></div></div></div>' if program_rows else ''}
@@ -2806,7 +2934,7 @@ def export_findings_memo(checklist_data: List[Dict], entity_name: str, analysis_
         # Key Concerns
         if analysis_summary.get('concerns'):
             doc.add_heading('Key Concerns', level=2)
-            for concern in analysis_summary['concerns'][:10]:  # Top 10 concerns
+            for concern in analysis_summary['concerns']:  # all concerns (a cap hid Steps 47/49/52 behind Step 50's per-fund lines)
                 doc.add_paragraph(concern, style='List Bullet')
         
         # Compliance Highlights
@@ -2828,12 +2956,24 @@ def export_findings_memo(checklist_data: List[Dict], entity_name: str, analysis_
     # Original checklist findings
     doc.add_heading('Detailed Checklist Findings', level=1)
     
+    try:
+        _, memo_quarter = current_fy_quarter()
+    except Exception:
+        memo_quarter = ""
     review_areas = {}
     for item in checklist_data:
-        if item.get('user_notes') or not item.get('completed'):
-            area = item['review_area']
-            if area not in review_areas: review_areas[area] = []
-            review_areas[area].append(item)
+        has_notes = bool(str(item.get('user_notes') or '').strip())
+        if not has_notes and item.get('completed'):
+            continue
+        if not has_notes:
+            # Internal-only incomplete steps don't belong in the district memo
+            if '(Q4 Only)' in str(item.get('check', '')) and memo_quarter != 'Q4':
+                continue
+            if item.get('review_area') == 'Final Steps':
+                continue
+        area = item['review_area']
+        if area not in review_areas: review_areas[area] = []
+        review_areas[area].append(item)
 
     if not review_areas:
         doc.add_paragraph("No findings or incomplete items to report.")
@@ -2845,9 +2985,9 @@ def export_findings_memo(checklist_data: List[Dict], entity_name: str, analysis_
                 status = "✓ Completed" if item['completed'] else "Incomplete"
                 p = doc.add_paragraph()
                 p.add_run(f"Status: {status}\n").bold = True
-                if item['user_notes']:
+                if str(item.get('user_notes') or '').strip():
                     p.add_run("\nFindings:\n").bold = True
-                    doc.add_paragraph(item['user_notes'], style='List Bullet')
+                    doc.add_paragraph(item['user_notes'].strip(), style='List Bullet')
                 doc.add_paragraph()
 
     # Standard public-record notice
@@ -3018,6 +3158,8 @@ My review notes are located in Column {note_col} of the Quarterly Feedback tab i
 1. Review the notes and provide your responses in Column {resp_col} (if applicable).
 2. Save the updated file.
 3. Upload the file to the FTS in the {fy_short} {quarter} folder.
+
+Response due dates for each item are listed in the Action Items section of the attached HTML analysis; high-priority items are due within two weeks.
 
 Additional Attachments for Your Convenience:
 
@@ -3904,8 +4046,10 @@ def render_checklist(user_inputs: Dict):
 
                 elif step_id == 47:
                     c1, c2 = st.columns(2)
-                    _v1 = keyed_number_input(c1, "Cash Balance Last Year", "s47_l", user_inputs['step_47_last_year'])
-                    _v2 = keyed_number_input(c2, "Cash Balance This Year", "s47_t", user_inputs['step_47_this_year'])
+                    _v1 = keyed_number_input(c1, "Prior-Year Q4 Line 7 (Ending Cash)", "s47_l", user_inputs['step_47_last_year'])
+                    _v2 = keyed_number_input(c2, "Current Line 1 (Beginning Cash)", "s47_t", user_inputs['step_47_this_year'])
+                    st.caption("Line 1 is read from the uploaded cash report when available; "
+                               "the second box is only a fallback.")
                     if (_v1, _v2) != (user_inputs['step_47_last_year'], user_inputs['step_47_this_year']):
                         st.session_state['step_47_last_year'], st.session_state['step_47_this_year'] = _v1, _v2
                         st.rerun(scope="app")
